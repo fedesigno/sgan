@@ -375,16 +375,16 @@ def main(args):
                 # Check stats on the validation set
                 logger.info('Checking stats on val ...')
                 metrics_val = check_accuracy(
-                    args, val_loader, generator, predictor, discriminator, d_loss_fn
+                    args, val_loader, predictor, discriminator, d_loss_fn
                 )
                 logger.info('Checking stats on train ...')
                 metrics_train = check_accuracy(
-                    args, train_loader, generator, predictor, discriminator,
+                    args, train_loader, predictor, discriminator,
                     d_loss_fn, limit=True
                 )
                 metrics_jta = check_accuracy(
-                    args, jta_loader, generator, predictor, discriminator,
-                    d_loss_fn, limit=True, img_gen=True
+                    args, jta_loader, predictor, discriminator,
+                    d_loss_fn, limit=True
                 )
                 wandb.log({
                         'train': metrics_train, 
@@ -427,15 +427,13 @@ def main(args):
                 eval_dict['min_fde'] = min_fde
 
                 wandb.log({
-                        'checkpoint': checkpoint,
                         'train': metrics_train, 
                         'val': metrics_val, 
                         'best': eval_dict,
                         'epoch': epoch,
                         't': t
                     })
-                
-                wandb.log({"my_custom_plot_id" : wandb.plot.line(metrics_jta['trajectories_gen'], "x", "y", title="Generated Trajectories")})
+
                 
                 out_path = os.path.join(args.output_dir, args.tag)
                 out_name = args.dataset_name +'_'+args.tag
@@ -454,24 +452,11 @@ def main(args):
                     out_path, '%s_no_model.pt' % args.checkpoint_name)
                 logger.info('Saving checkpoint to {}'.format(checkpoint_path))
 
-                key_blacklist = [
-                    'g_state', 'd_state', 'g_best_state', 'g_best_nl_state',
-                    'g_optim_state', 'd_optim_state', 'd_best_state',
-                    'd_best_nl_state'
-                ]
-                small_checkpoint = {}
-                for k, v in checkpoint.items():
-                    if k not in key_blacklist:
-                        small_checkpoint[k] = v
-                #torch.save(small_checkpoint, checkpoint_path)
-                logger.info('Done.')
-
             t += 1
             d_steps_left = args.d_steps
             g_steps_left = args.g_steps
             if t >= args.num_iterations:
                 break
-
 
 def discriminator_step(
     args, batch_, predictor, discriminator, generator, d_loss_fn, d_loss_g_fn, optimizer_d, scaler
@@ -530,7 +515,6 @@ def discriminator_step(
         #scaler.update()
 
     return losses
-
 
 def predictor_step(
 args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p, scaler
@@ -679,10 +663,8 @@ def evaluate_helper(error, seq_start_end):
         sum_ += _error
     return sum_
 
-
 def check_accuracy(
-    args, loader, generator, predictor, discriminator, d_loss_fn, limit=False, img_gen=False
-):
+    args, loader, predictor, discriminator, d_loss_fn, limit=False):
 
     d_losses = []
     metrics = {}
@@ -713,17 +695,6 @@ def check_accuracy(
             pred_traj_fake = relative_to_abs(
                 pred_traj_fake_rel, obs_traj[-1]
             )
-            if img_gen:
-                obs_traj_ = torch.cat([obs_traj, pred_traj_gt], dim=0)
-                obs_traj_rel_ = torch.cat([obs_traj_rel, pred_traj_gt_rel], dim=0)
-
-                generator_out = generator(obs_traj_, obs_traj_rel_, seq_start_end)
-
-                pred_gen_rel = generator_out
-                pred_gen = relative_to_abs(pred_gen_rel, obs_traj_[-1])
-                data = [pred_gen[:,:,0].cpu().detach().numpy(), pred_gen[:,:,1].cpu().detach().numpy()]
-                table = wandb.Table(data=data, columns = ["x", "y"])
-                metrics['trajectories_gen'] = table
 
             ade.append(displacement_error(
                 pred_traj_fake, pred_traj_gt, mode='raw'
@@ -778,9 +749,6 @@ def check_accuracy(
 
     return metrics
 
-
-
-
 def cal_l2_losses(
     pred_traj_gt, pred_traj_gt_rel, pred_traj_fake, pred_traj_fake_rel,
     loss_mask
@@ -793,13 +761,11 @@ def cal_l2_losses(
     )
     return g_l2_loss_abs, g_l2_loss_rel
 
-
 def cal_ade(pred_traj_gt, pred_traj_fake, linear_ped, non_linear_ped):
     ade = displacement_error(pred_traj_fake, pred_traj_gt)
     ade_l = displacement_error(pred_traj_fake, pred_traj_gt, linear_ped)
     ade_nl = displacement_error(pred_traj_fake, pred_traj_gt, non_linear_ped)
     return ade, ade_l, ade_nl
-
 
 def cal_fde(
     pred_traj_gt, pred_traj_fake, linear_ped, non_linear_ped
@@ -812,7 +778,6 @@ def cal_fde(
         pred_traj_fake[-1], pred_traj_gt[-1], non_linear_ped
     )
     return fde, fde_l, fde_nl
-
 
 if __name__ == '__main__':
     args = parser.parse_args()
