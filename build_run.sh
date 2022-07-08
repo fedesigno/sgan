@@ -3,7 +3,7 @@ docker build -t eidos-service.di.unito.it/signoretta/sgan:trajgen_new . -f Docke
 docker push eidos-service.di.unito.it/signoretta/sgan:trajgen_new
 
 docker service rm signoretta-sgan-trajgen_new
-submit eidos-service.di.unito.it/signoretta/sgan:trajgen_new train_empowered.py \
+submit eidos-service.di.unito.it/signoretta/sgan:trajgen_new train_SGAN_GEN.py \
   --dataset_name 'eth' \
   --delim tab \
   --d_type 'local' \
