@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from utils import relative_to_abs
-from losses import l2_loss
+from sgan.utils import relative_to_abs
+from sgan.losses import l2_loss
 
 def discriminator_step(
     args, batch_, predictor, discriminator, generator, d_loss_fn, d_loss_g_fn, optimizer_d
@@ -22,8 +22,7 @@ def discriminator_step(
 
         losses = {}
         loss = torch.zeros(1).to(pred_traj_gt)
-        
-        #with torch.cuda.amp.autocast():
+
         predictor_out = predictor(obs_traj, obs_traj_rel, seq_start_end)
 
         pred_traj_fake_rel = predictor_out
@@ -38,14 +37,11 @@ def discriminator_step(
         scores_real = discriminator(traj_real, traj_real_rel, seq_start_end)
 
         # Compute loss with optional gradient penalty
+        # if data are from predictor, than they're set all as 'fake'
         if i==1:
             data_loss = d_loss_g_fn(scores_real, scores_fake, 'fake')
         else:
-            data_loss = d_loss_g_fn(scores_real, scores_fake, 'real')
-            #data_loss = d_loss_fn(scores_real, scores_fake)
-
-        #scaler.scale(loss).backward()
-        #scaler.unscale_(optimizer_d)
+            data_loss = d_loss_fn(scores_real, scores_fake)
 
         losses['D_data_loss'] = data_loss.item()
         loss += data_loss
@@ -56,8 +52,7 @@ def discriminator_step(
             nn.utils.clip_grad_norm_(discriminator.parameters(),
                                         args.clipping_threshold_d)
         optimizer_d.step()
-        #scaler.step(optimizer_d)
-        #scaler.update()
+
 
     return losses
 
@@ -116,8 +111,6 @@ args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p
         discriminator_loss = g_loss_fn(scores_fake)
 
         loss += discriminator_loss
-        #scaler.scale(loss).backward()
-        #scaler.unscale_(optimizer_p)
         losses['P_discriminator_loss'] = discriminator_loss.item()
         losses['P_total_loss'] = loss.item()
 
@@ -127,10 +120,7 @@ args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p
             nn.utils.clip_grad_norm_(
                 predictor.parameters(), args.clipping_threshold_g
             )
-        #scaler.step(optimizer_p)
         optimizer_p.step()
-        #scaler.update()
-
         return losses
 
 def generator_step(
@@ -147,20 +137,17 @@ args, batch, generator, discriminator, g_loss_fn, optimizer_g
     loss = torch.zeros(1).to(obs_traj)
     g_l2_loss_rel = []
 
-    #loss_mask = loss_mask[:, args.obs_len:]
+    generator_out = generator(obs_traj, obs_traj_rel, seq_start_end)
 
-    for _ in range(1): #args.best_k):
-        generator_out = generator(obs_traj, obs_traj_rel, seq_start_end)
+    pred_traj_fake_rel = generator_out
+    pred_traj_fake = relative_to_abs(pred_traj_fake_rel, obs_traj[-1])
 
-        pred_traj_fake_rel = generator_out
-        pred_traj_fake = relative_to_abs(pred_traj_fake_rel, obs_traj[-1])
-
-        if args.l2_loss_weight > 0:
-            g_l2_loss_rel.append(args.l2_loss_weight * l2_loss(
-                pred_traj_fake_rel,
-                obs_traj_rel,
-                loss_mask,
-                mode='raw'))
+    if args.l2_loss_weight > 0:
+        g_l2_loss_rel.append(args.l2_loss_weight * l2_loss(
+            pred_traj_fake_rel,
+            obs_traj_rel,
+            loss_mask,
+            mode='raw'))
 
     g_l2_loss_sum_rel = torch.zeros(1).to(obs_traj)
     if args.l2_loss_weight > 0:
@@ -192,6 +179,5 @@ args, batch, generator, discriminator, g_loss_fn, optimizer_g
             generator.parameters(), args.clipping_threshold_g
         )
     optimizer_g.step()
-
     return losses
 

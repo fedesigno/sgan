@@ -7,7 +7,7 @@ import inspect
 from contextlib import contextmanager
 import subprocess
 
-from losses import cal_l2_losses, l2_loss, displacement_error, final_displacement_error
+from sgan.losses import cal_l2_losses, l2_loss, displacement_error, final_displacement_error
 
 
 def int_tuple(s):

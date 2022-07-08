@@ -1,1 +1,0 @@
-                Dataset: eth,                Pred Len: 12,                ADE: 0.66,                FDE: 1.16,                sd(ade): 0.0075,                sd(fde): 0.0152

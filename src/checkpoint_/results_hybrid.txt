@@ -1,3 +1,0 @@
-                Dataset: eth,                Pred Len: 12,                ADE: 0.84,                FDE: 1.64
-                Dataset: hotel,                Pred Len: 12,                ADE: 0.56,                FDE: 1.08
-                Dataset: univ,                Pred Len: 12,                ADE: 0.83,                FDE: 1.56

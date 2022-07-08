@@ -6,6 +6,6 @@ docker push eidos-service.di.unito.it/signoretta/sgan:eval
 docker service rm signoretta-sgan-eval
 submit eidos-service.di.unito.it/signoretta/sgan:eval evaluate_model.py \
   --checkpoint_fold '/scratch/sgan/src/checkpoint/' \
-  --model_path 'baseline'
+  --model_path 'trajgen_v1'
 
 docker service logs -f signoretta-sgan-eval
