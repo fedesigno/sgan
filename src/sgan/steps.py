@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from sgan.utils import relative_to_abs
 from sgan.losses import l2_loss
+from sgcn.utils import seq_to_graph
 
 def discriminator_step(
     args, batch_, predictor, discriminator, generator, d_loss_fn, d_loss_g_fn, optimizer_d
@@ -10,7 +11,7 @@ def discriminator_step(
         batch = [tensor.cuda() for tensor in batch]
         (obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped,
             loss_mask, seq_start_end) = batch
-
+        
         if i==1:
             traj = torch.cat([obs_traj, pred_traj_gt], dim=0)
             traj_rel = torch.cat([obs_traj_rel, pred_traj_gt_rel], dim=0)
@@ -20,8 +21,21 @@ def discriminator_step(
             obs_traj_rel, pred_traj_gt_rel = torch.split(pred_traj_fake_rel, [8,12])
             obs_traj, pred_traj_gt = torch.split(pred_traj_fake, [8,12])
 
+        V_obs = seq_to_graph(obs_traj, obs_traj_rel, True)
+        V_tr = seq_to_graph(pred_traj_gt, pred_traj_gt_rel, False)
+
+        identity_spatial = torch.ones((V_obs.shape[0], V_obs.shape[1], V_obs.shape[1]), device='cuda') * \
+                           torch.eye(V_obs.shape[1], device='cuda')  # [obs_len N N]
+        identity_temporal = torch.ones((V_obs.shape[1], V_obs.shape[0], V_obs.shape[0]), device='cuda') * \
+                            torch.eye(V_obs.shape[0], device='cuda')  # [N obs_len obs_len]
+        identity = [identity_spatial, identity_temporal]
         losses = {}
         loss = torch.zeros(1).to(pred_traj_gt)
+
+        V_pred = predictor(V_obs, identity)  # A_obs <8, #, #>
+        print(V_pred.shape)
+        V_pred = V_pred.squeeze()
+        V_tr = V_tr.squeeze()
 
         predictor_out = predictor(obs_traj, obs_traj_rel, seq_start_end)
 

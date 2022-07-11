@@ -1,9 +1,9 @@
-docker rmi eidos-service.di.unito.it/signoretta/sgan:trajgen_new
-docker build -t eidos-service.di.unito.it/signoretta/sgan:trajgen_new . -f Dockerfile
-docker push eidos-service.di.unito.it/signoretta/sgan:trajgen_new
+docker rmi eidos-service.di.unito.it/signoretta/sgan:sgcn_eth
+docker build -t eidos-service.di.unito.it/signoretta/sgan:sgcn_eth . -f Dockerfile
+docker push eidos-service.di.unito.it/signoretta/sgan:sgcn_eth
 
-docker service rm signoretta-sgan-trajgen_new
-submit eidos-service.di.unito.it/signoretta/sgan:trajgen_new train_SGAN_GEN.py \
+docker service rm signoretta-sgan-sgcn_eth
+submit eidos-service.di.unito.it/signoretta/sgan:sgcn_eth train_SGCN_GEN.py \
   --dataset_name 'eth' \
   --delim tab \
   --d_type 'local' \
@@ -38,9 +38,9 @@ submit eidos-service.di.unito.it/signoretta/sgan:trajgen_new train_SGAN_GEN.py \
   --checkpoint_name gan_test \
   --restore_from_checkpoint 0 \
   --dataset_dir '/data/trajgan/datasets/datasets_real' \
-  --tag 'trajgen_v1' \
+  --tag 'with_SGCN' \
   --dataset_dir_synth '/data/trajgan/datasets/datasets_synthetic' 
 
-docker service logs -f signoretta-sgan-trajgen_new
+docker service logs -f signoretta-sgan-sgcn_eth
 
-#  --dataset_dir_synth '/data/trajgan/datasets/datasets_trajgen_new' \
+#  --dataset_dir_synth '/data/trajgan/datasets/datasets_sgcn_eth' \

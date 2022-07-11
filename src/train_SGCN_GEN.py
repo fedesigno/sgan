@@ -20,6 +20,7 @@ from sgan.losses import displacement_error, final_displacement_error
 from sgan.losses import cal_ade, cal_fde, cal_l2_losses
 
 from sgan.models import TrajectoryGenerator, TrajectoryDiscriminator
+from sgcn.model import TrajectoryModel
 from sgan.utils import int_tuple, bool_flag, get_total_norm
 from sgan.utils import relative_to_abs, get_dset_path
 from sgan.utils import check_accuracy, get_dtypes, init_weights
@@ -143,24 +144,15 @@ def main(args):
         'There are {} iterations per epoch'.format(iterations_per_epoch)
     )
 
-    predictor = TrajectoryGenerator(
-        obs_len=args.obs_len,
-        pred_len=args.pred_len,
-        embedding_dim=args.embedding_dim,
-        encoder_h_dim=args.encoder_h_dim_g,
-        decoder_h_dim=args.decoder_h_dim_g,
-        mlp_dim=args.mlp_dim,
-        num_layers=args.num_layers,
-        noise_dim=args.noise_dim,
-        noise_type=args.noise_type,
-        noise_mix_type=args.noise_mix_type,
-        pooling_type=args.pooling_type,
-        pool_every_timestep=args.pool_every_timestep,
-        dropout=args.dropout,
-        bottleneck_dim=args.bottleneck_dim,
-        neighborhood_size=args.neighborhood_size,
-        grid_size=args.grid_size,
-        batch_norm=args.batch_norm)
+    predictor = TrajectoryModel(
+        number_asymmetric_conv_layer=7, 
+        embedding_dims=64, 
+        number_gcn_layers=1, 
+        dropout=0,
+        obs_len=8, 
+        pred_len=12, 
+        n_tcn=5, 
+        out_dims=5)
 
     predictor.apply(init_weights)
     predictor.type(float_dtype).train()
@@ -450,7 +442,7 @@ if __name__ == '__main__':
     for dataset_name in ['eth', 'hotel', 'univ', 'zara1', 'zara2']:
         args.dataset_name = dataset_name
         wandb.init(
-            project="traj-generation", 
+            project="traj-gen-SGCN", 
             config=args, 
             tags=[args.tag, dataset_name],
             name=f'{args.tag}_{dataset_name}')
