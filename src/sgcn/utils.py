@@ -12,27 +12,60 @@ def anorm(p1, p2):
         return 0
     return 1 / (NORM)
 
+def loc_pos_ts(seq_):
+
+    # seq_ [obs_len N 2]
+    obs_len = seq_.shape[0]
+    num_ped = seq_.shape[1]
+
+    pos_seq = torch.arange(1, obs_len + 1).cuda()
+    pos_seq = pos_seq[:, np.newaxis, np.newaxis]
+    pos_seq = pos_seq.repeat_interleave(num_ped, axis=1)
+    result = torch.cat((pos_seq, seq_), axis=-1)
+    return result
+
 def loc_pos(seq_):
 
     # seq_ [obs_len N 2]
+
     obs_len = seq_.shape[0]
     num_ped = seq_.shape[1]
 
     pos_seq = np.arange(1, obs_len + 1)
     pos_seq = pos_seq[:, np.newaxis, np.newaxis]
     pos_seq = pos_seq.repeat(num_ped, axis=1)
+
     result = np.concatenate((pos_seq, seq_), axis=-1)
+
     return result
 
 
 def seq_to_graph(seq_, seq_rel, pos_enc=False):
-    seq_, seq_rel = seq_.cpu().numpy(), seq_rel.cpu().numpy()
+    seq_ = seq_.squeeze()
+    seq_rel = seq_rel.squeeze()
+    seq_len = seq_.shape[2]
+    max_nodes = seq_.shape[0]
+
+    V = np.zeros((seq_len, max_nodes, 2))
+    for s in range(seq_len):
+        step_ = seq_[:, :, s]
+        step_rel = seq_rel[:, :, s]
+        for h in range(len(step_)):
+            V[s, h, :] = step_rel[h]
+
+    if pos_enc:
+        V = loc_pos(V)
+
+    return torch.from_numpy(V).type(torch.float)
+
+def seq_to_graph_ts(seq_, seq_rel, pos_enc=False):
+    #seq_, seq_rel = seq_.cpu().numpy(), seq_rel.cpu().numpy()
     seq_ = seq_.squeeze()
     seq_rel = seq_rel.squeeze()
     seq_len = seq_.shape[0]
     max_nodes = seq_.shape[1]
 
-    V = np.zeros((seq_len, max_nodes, 2))
+    V = torch.zeros((seq_len, max_nodes, 2)).cuda()
     for s in range(seq_len):
         step_ = seq_[s, :, :]
         step_rel = seq_rel[s, :, :]
@@ -42,7 +75,9 @@ def seq_to_graph(seq_, seq_rel, pos_enc=False):
     if pos_enc:
         V = loc_pos(V)
 
-    return torch.from_numpy(V).type(torch.float).cuda()
+    return V
+
+
 
 def poly_fit(traj, traj_len, threshold):
     """
@@ -88,5 +123,3 @@ def read_file(_path, delim='\t'):
             line = [float(i) for i in line]
             data.append(line)
     return np.asarray(data)
-
-

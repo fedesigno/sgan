@@ -37,7 +37,7 @@ def fde(predAll,targetAll,count_):
     return sum_all/All
 
 
-def seq_to_nodes(seq_,max_nodes = 88):
+def seq_to_nodes_np(seq_,max_nodes = 88):
     seq_ = seq_.squeeze()
     seq_len = seq_.shape[2]
     
@@ -49,12 +49,32 @@ def seq_to_nodes(seq_,max_nodes = 88):
             
     return V.squeeze()
 
-def nodes_rel_to_nodes_abs(nodes,init_node):
+def seq_to_nodes(seq_,max_nodes = 88):
+    seq_ = seq_.squeeze()
+    seq_len = seq_.shape[2]
+
+    V = torch.zeros((seq_len,max_nodes,2)).cuda()
+    for s in range(seq_len):
+        step_ = seq_[:,:,s]
+        for h in range(len(step_)): 
+            V[s,h,:] = step_[h]        
+    return V.squeeze()
+
+
+
+def nodes_rel_to_nodes_abs_np(nodes,init_node):
     nodes_ = np.zeros_like(nodes)
     for s in range(nodes.shape[0]):
         for ped in range(nodes.shape[1]):
             nodes_[s,ped,:] = np.sum(nodes[:s+1,ped,:],axis=0) + init_node[ped,:]
+    return nodes_.squeeze()
 
+
+def nodes_rel_to_nodes_abs(nodes,init_node):
+    nodes_ = torch.zeros_like(nodes).cuda()
+    for s in range(nodes.shape[0]):
+        for ped in range(nodes.shape[1]):
+            nodes_[s,ped,:] = torch.sum(nodes[:s+1,ped,:],axis=0) + init_node[ped,:]
     return nodes_.squeeze()
 
 def closer_to_zero(current,new_v):
@@ -92,4 +112,6 @@ def bivariate_loss(V_pred,V_trgt):
     result = torch.mean(result)
     
     return result
-   
+
+def graph_loss(V_pred, V_target):
+    return bivariate_loss(V_pred, V_target)

@@ -13,5 +13,6 @@ WORKDIR /src
 
 COPY src/requirements.txt .
 RUN pip install -r requirements.txt
+RUN pip install wandb --upgrade
 
 ENTRYPOINT ["python3"]

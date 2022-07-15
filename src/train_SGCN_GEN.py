@@ -204,7 +204,7 @@ def main(args):
     d_loss_g_fn = gan_d_g_loss
 
     optimizer_p = optim.Adam(
-        predictor.parameters(), lr=args.g_learning_rate
+        predictor.parameters(), lr=0.01, weight_decay=0.0001 #args.g_learning_rate
         )
     optimizer_d = optim.Adam(
         discriminator.parameters(), lr=args.d_learning_rate
@@ -212,6 +212,8 @@ def main(args):
     optimizer_g = optim.Adam(
         generator.parameters(), lr=args.g_learning_rate
     )
+
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer_d, milestones=[50, 100], gamma=0.5)
     # Maybe restore from checkpoint
     restore_path = None
     if args.checkpoint_start_from is not None:
@@ -315,11 +317,15 @@ def main(args):
                     get_total_norm(predictor.parameters())
                 )
                 g_steps_left -= 1
+                
+            scheduler.step()
 
             if args.timing == 1:
                 torch.cuda.synchronize()
                 t2 = time.time()
                 logger.info('{} step took {}'.format(step_type, t2 - t1))
+            
+
 
             # Skip the rest if we are not at the end of an iteration
             if d_steps_left > 0 or g_steps_left > 0 or p_steps_left > 0:
@@ -438,12 +444,10 @@ def main(args):
 if __name__ == '__main__':
     args = parser.parse_args()
     os.environ["WANDB_API_KEY"] = 'b098b7dbae4e9dd2520c5115fab0b6f8752ea865'
-
-    for dataset_name in ['eth', 'hotel', 'univ', 'zara1', 'zara2']:
-        args.dataset_name = dataset_name
-        wandb.init(
-            project="traj-gen-SGCN", 
-            config=args, 
-            tags=[args.tag, dataset_name],
-            name=f'{args.tag}_{dataset_name}')
-        main(args)
+    #for dataset_name in ['eth', 'hotel', 'univ', 'zara1', 'zara2']:
+    wandb.init(
+        project="traj-gen-SGCN", 
+        config=args, 
+        tags=[args.tag, args.dataset_name],
+        name=f'{args.tag}_{args.dataset_name}')
+    main(args)

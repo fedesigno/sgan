@@ -7,8 +7,10 @@ from attrdict import AttrDict
 
 from sgan.data.loader import data_loader
 from sgan.models import TrajectoryGenerator
+from sgcn.model import TrajectoryModel
 from sgan.losses import displacement_error, final_displacement_error
 from sgan.utils import relative_to_abs, get_dset_path
+from sgcn.metrics import nodes_rel_to_nodes_abs
 
 import numpy as np
 
@@ -21,28 +23,21 @@ parser.add_argument('--dset_type', default='test', type=str)
 
 def get_generator(checkpoint):
     args = AttrDict(checkpoint['args'])
-    generator = TrajectoryGenerator(
-        obs_len=args.obs_len,
-        pred_len=args.pred_len,
-        embedding_dim=args.embedding_dim,
-        encoder_h_dim=args.encoder_h_dim_g,
-        decoder_h_dim=args.decoder_h_dim_g,
-        mlp_dim=args.mlp_dim,
-        num_layers=args.num_layers,
-        noise_dim=args.noise_dim,
-        noise_type=args.noise_type,
-        noise_mix_type=args.noise_mix_type,
-        pooling_type=args.pooling_type,
-        pool_every_timestep=args.pool_every_timestep,
-        dropout=args.dropout,
-        bottleneck_dim=args.bottleneck_dim,
-        neighborhood_size=args.neighborhood_size,
-        grid_size=args.grid_size,
-        batch_norm=args.batch_norm)
-    generator.load_state_dict(checkpoint['g_best_state'])
-    generator.cuda()
-    generator.eval()
-    return generator
+
+    predictor = TrajectoryModel(
+        number_asymmetric_conv_layer=7, 
+        embedding_dims=64, 
+        number_gcn_layers=1, 
+        dropout=0,
+        obs_len=8, 
+        pred_len=12, 
+        n_tcn=5, 
+        out_dims=5)
+
+    predictor.load_state_dict(checkpoint['g_best_state'])
+    predictor.cuda()
+    predictor.eval()
+    return predictor
 
 
 def evaluate_helper(error, seq_start_end):
@@ -59,7 +54,7 @@ def evaluate_helper(error, seq_start_end):
     return sum_
 
 
-def evaluate(args, loader, generator, num_samples):
+def evaluate(args, loader, predictor, num_samples):
     ade_out, fde_out, ade_std_out, fde_std_out = [],[],[],[]
     
     with torch.no_grad():
@@ -68,20 +63,31 @@ def evaluate(args, loader, generator, num_samples):
             total_traj = 0
             for batch in loader:
                 batch = [tensor.cuda() for tensor in batch]
-                (obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel,
-                non_linear_ped, loss_mask, seq_start_end) = batch
+                obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped, \
+                loss_mask, V_obs, V_tr, seq_start_end = batch
 
                 ade, fde = [], []
                 ade_std, fde_std = [], []
                 total_traj += pred_traj_gt.size(1)
 
                 for _ in range(num_samples):
-                    pred_traj_fake_rel = generator(
-                        obs_traj, obs_traj_rel, seq_start_end
-                    )
-                    pred_traj_fake = relative_to_abs(
-                        pred_traj_fake_rel, obs_traj[-1]
-                    )
+
+                    identity_spatial = torch.ones((V_obs.shape[1], V_obs.shape[2], V_obs.shape[2]), device='cuda') * \
+                           torch.eye(V_obs.shape[2], device='cuda')  # [obs_len N N]
+                    identity_temporal = torch.ones((V_obs.shape[2], V_obs.shape[1], V_obs.shape[1]), device='cuda') * \
+                                        torch.eye(V_obs.shape[1], device='cuda')  # [N obs_len obs_len]
+
+                    identity = [identity_spatial, identity_temporal]
+                    V_pred = predictor(V_obs, identity)  # A_obs <8, #, #>
+                    V_pred = V_pred.squeeze()
+                    V_tr = V_tr.squeeze()
+                    V_x = obs_traj #seq_to_nodes(obs_traj_, n) 
+                    V_rel_to_abs = nodes_rel_to_nodes_abs(V_pred[:,:,:2], 
+                                                            V_x[-1,:,:]) 
+
+                    pred_traj_fake = V_rel_to_abs
+                    pred_traj_fake_rel = V_pred[:,:,:2]
+
                     ade.append(displacement_error(
                         pred_traj_fake, pred_traj_gt, mode='raw'
                     ))
@@ -117,10 +123,9 @@ def main(args):
         paths = [args.model_path]
 
     for path in paths:
-        try:
-            checkpoint = torch.load(path)
-        except:
-            continue
+
+        checkpoint = torch.load(path)
+
         generator = get_generator(checkpoint)
         _args = AttrDict(checkpoint['args'])
 
@@ -147,26 +152,6 @@ def main(args):
         print('- Dataset: {}, Pred Len: {}, ADE: {:.2f}, FDE: {:.2f}'.format(
             _args.dataset_name, _args.pred_len, np.mean(ade), np.mean(fde)))
 
-        '''
-        with open(os.path.join(args.checkpoint_fold, f'results_{_args.tag}.txt'), 'a') as f:
-            f.write('\
-                Dataset: {},\
-                Pred Len: {},\
-                ADE: {:.2f},\
-                FDE: {:.2f},\
-                sd(ade): {:.4f},\
-                sd(fde): {:.4f}'.format(
-                    _args.dataset_name, 
-                    12, 
-                    np.mean(ade), 
-                    np.mean(fde),
-                    np.std(ade),
-                    np.std(fde)
-                    )
-                )
-            f.write('\n')
-            '''
-
         eval_dict['ade'] = np.mean(ade)
         eval_dict['fde'] = np.mean(fde)
         eval_dict['ade_std'] = np.std(ade)
@@ -177,10 +162,9 @@ def main(args):
             })
 
 
-
-
 if __name__ == '__main__':
     args = parser.parse_args()
-    for t in ['baseline']: #os.listdir(args.checkpoint_fold):
+    print("models founded:",os.listdir(args.checkpoint_fold))
+    for t in os.listdir(args.checkpoint_fold):
         args.model_path = os.path.join(args.checkpoint_fold, t)
         main(args)

@@ -3,14 +3,40 @@ import torch.nn as nn
 from sgan.utils import relative_to_abs
 from sgan.losses import l2_loss
 from sgcn.utils import seq_to_graph
+from sgcn.metrics import graph_loss, seq_to_nodes, nodes_rel_to_nodes_abs
+
+import matplotlib.pyplot as plt
+import os
+
+def traj_plot(batch, title, k):
+    if k==0:
+        c='y.'
+    elif k==1:
+        c='g.'
+    elif k==2:
+        c='b.'
+
+    plot_dir = "/scratch/sgan/src/plots/"
+    if not os.path.exists(plot_dir):
+        os.makedirs(plot_dir)
+
+    x = batch[:,:,0].cpu()
+    y = batch[:,:,1].cpu()
+    plt.plot(x.detach().numpy(), y.detach().numpy(), c, alpha=0.4)
+    plt.plot(x.detach().numpy(), y.detach().numpy(), 'k-', alpha=0.2)
+    plt.title('trajectories-'+title)
+    plt.savefig(plot_dir+title+".png")
+    plt.close()
 
 def discriminator_step(
     args, batch_, predictor, discriminator, generator, d_loss_fn, d_loss_g_fn, optimizer_d
 ):
     for i, batch in enumerate(batch_):
         batch = [tensor.cuda() for tensor in batch]
-        (obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped,
-            loss_mask, seq_start_end) = batch
+        #(obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped,
+            #loss_mask, seq_start_end) = batch
+        obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped, \
+        loss_mask, V_obs, V_tr, seq_start_end = batch
         
         if i==1:
             traj = torch.cat([obs_traj, pred_traj_gt], dim=0)
@@ -21,27 +47,29 @@ def discriminator_step(
             obs_traj_rel, pred_traj_gt_rel = torch.split(pred_traj_fake_rel, [8,12])
             obs_traj, pred_traj_gt = torch.split(pred_traj_fake, [8,12])
 
-        V_obs = seq_to_graph(obs_traj, obs_traj_rel, True)
-        V_tr = seq_to_graph(pred_traj_gt, pred_traj_gt_rel, False)
 
-        identity_spatial = torch.ones((V_obs.shape[0], V_obs.shape[1], V_obs.shape[1]), device='cuda') * \
-                           torch.eye(V_obs.shape[1], device='cuda')  # [obs_len N N]
-        identity_temporal = torch.ones((V_obs.shape[1], V_obs.shape[0], V_obs.shape[0]), device='cuda') * \
-                            torch.eye(V_obs.shape[0], device='cuda')  # [N obs_len obs_len]
+        identity_spatial = torch.ones((V_obs.shape[1], V_obs.shape[2], V_obs.shape[2]), device='cuda') * \
+                           torch.eye(V_obs.shape[2], device='cuda')  # [obs_len N N]
+        identity_temporal = torch.ones((V_obs.shape[2], V_obs.shape[1], V_obs.shape[1]), device='cuda') * \
+                            torch.eye(V_obs.shape[1], device='cuda')  # [N obs_len obs_len]
+
         identity = [identity_spatial, identity_temporal]
         losses = {}
         loss = torch.zeros(1).to(pred_traj_gt)
 
         V_pred = predictor(V_obs, identity)  # A_obs <8, #, #>
-        print(V_pred.shape)
+
         V_pred = V_pred.squeeze()
         V_tr = V_tr.squeeze()
 
-        predictor_out = predictor(obs_traj, obs_traj_rel, seq_start_end)
+        V_x = obs_traj #seq_to_nodes(obs_traj_, n) #.cpu().numpy().copy(), n)
+        V_rel_to_abs = nodes_rel_to_nodes_abs(V_pred[:,:,:2], #.detach().cpu().numpy().copy(),
+                                                 V_x[-1,:,:]) #.copy())
 
-        pred_traj_fake_rel = predictor_out
-        pred_traj_fake = relative_to_abs(pred_traj_fake_rel, obs_traj[-1])
 
+        pred_traj_fake = V_rel_to_abs
+        pred_traj_fake_rel = V_pred[:,:,:2]
+        
         traj_real = torch.cat([obs_traj, pred_traj_gt], dim=0)
         traj_real_rel = torch.cat([obs_traj_rel, pred_traj_gt_rel], dim=0)
         traj_fake = torch.cat([obs_traj, pred_traj_fake], dim=0)
@@ -70,13 +98,14 @@ def discriminator_step(
 
     return losses
 
+
 def predictor_step(
 args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p
 ):
     for i, batch in enumerate(batch_):
         batch = [tensor.cuda() for tensor in batch]
-        (obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped,
-            loss_mask, seq_start_end) = batch
+        obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped, \
+        loss_mask, V_obs, V_tr, seq_start_end = batch
 
         if i==1:
             traj = torch.cat([obs_traj, pred_traj_gt], dim=0)
@@ -88,37 +117,34 @@ args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p
             obs_traj, pred_traj_gt = torch.split(pred_traj_fake, [8,12])
 
         losses = {}
+
+        identity_spatial = torch.ones((V_obs.shape[1], V_obs.shape[2], V_obs.shape[2]), device='cuda') * \
+                           torch.eye(V_obs.shape[2], device='cuda')  # [obs_len N N]
+        identity_temporal = torch.ones((V_obs.shape[2], V_obs.shape[1], V_obs.shape[1]), device='cuda') * \
+                            torch.eye(V_obs.shape[1], device='cuda')  # [N obs_len obs_len]
+
+        identity = [identity_spatial, identity_temporal]
+        losses = {}
         loss = torch.zeros(1).to(pred_traj_gt)
-        g_l2_loss_rel = []
 
-        loss_mask = loss_mask[:, args.obs_len:]
+        V_pred = predictor(V_obs, identity)  # A_obs <8, #, #>
 
-        for _ in range(args.best_k):
-            predictor_out = predictor(obs_traj, obs_traj_rel, seq_start_end)
+        V_pred = V_pred.squeeze()
+        V_tr = V_tr.squeeze()
 
-            pred_traj_fake_rel = predictor_out
-            pred_traj_fake = relative_to_abs(pred_traj_fake_rel, obs_traj[-1])
+        V_x = obs_traj #seq_to_nodes(obs_traj_, n) 
+        V_rel_to_abs = nodes_rel_to_nodes_abs(V_pred[:,:,:2], 
+                                                 V_x[-1,:,:]) 
 
-            if args.l2_loss_weight > 0:
-                g_l2_loss_rel.append(args.l2_loss_weight * l2_loss(
-                    pred_traj_fake_rel,
-                    pred_traj_gt_rel,
-                    loss_mask,
-                    mode='raw'))
+        pred_traj_fake = V_rel_to_abs
+        pred_traj_fake_rel = V_pred[:,:,:2]
 
-        g_l2_loss_sum_rel = torch.zeros(1).to(pred_traj_gt)
-        if args.l2_loss_weight > 0:
-            g_l2_loss_rel = torch.stack(g_l2_loss_rel, dim=1)
-            for start, end in seq_start_end.data:
-                _g_l2_loss_rel = g_l2_loss_rel[start:end]
-                _g_l2_loss_rel = torch.sum(_g_l2_loss_rel, dim=0)
-                _g_l2_loss_rel = torch.min(_g_l2_loss_rel) / torch.sum(
-                    loss_mask[start:end])
-                g_l2_loss_sum_rel += _g_l2_loss_rel
-            losses['P_l2_loss_rel'] = g_l2_loss_sum_rel.item()
-            loss += g_l2_loss_sum_rel
+        l = graph_loss(V_pred, V_tr)
+        loss += l
+        losses['P_graph_loss'] = l.item()
 
         traj_fake = torch.cat([obs_traj, pred_traj_fake], dim=0)
+        #traj_plot(traj_fake, 'fake_from_pred', 0)
         traj_fake_rel = torch.cat([obs_traj_rel, pred_traj_fake_rel], dim=0)
 
         scores_fake = discriminator(traj_fake, traj_fake_rel, seq_start_end)
@@ -132,17 +158,18 @@ args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p
         loss.backward()
         if args.clipping_threshold_g > 0:
             nn.utils.clip_grad_norm_(
-                predictor.parameters(), args.clipping_threshold_g
+                predictor.parameters(), 10
             )
         optimizer_p.step()
         return losses
+
 
 def generator_step(
 args, batch, generator, discriminator, g_loss_fn, optimizer_g
 ):
     batch = [tensor.cuda() for tensor in batch]
-    (obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped,
-        loss_mask, seq_start_end) = batch
+    obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped, \
+        loss_mask, V_obs, V_tr, seq_start_end = batch
     
     obs_traj = torch.cat([obs_traj, pred_traj_gt], dim=0)
     obs_traj_rel = torch.cat([obs_traj_rel, pred_traj_gt_rel], dim=0)
@@ -177,6 +204,8 @@ args, batch, generator, discriminator, g_loss_fn, optimizer_g
 
     traj_fake = pred_traj_fake 
     traj_fake_rel = pred_traj_fake_rel 
+
+    #traj_plot(traj_fake, 'fake_from_gen', 1)
 
     scores_fake = discriminator(traj_fake, traj_fake_rel, seq_start_end)
     discriminator_loss = g_loss_fn(scores_fake)

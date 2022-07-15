@@ -8,6 +8,7 @@ tqdm
 protobuf
 numpy
 cython
+tqdm
 #Pillow==6.2.0
 #six==1.11.0
 #pkg-resources==0.0.0

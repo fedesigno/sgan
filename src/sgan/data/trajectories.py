@@ -7,11 +7,44 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 import re
+from sgcn.utils import seq_to_graph
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
 
 def seq_collate(data):
+    (obs_seq_list, pred_seq_list, obs_seq_rel_list, pred_seq_rel_list,
+     non_linear_ped_list, loss_mask_list, V_obs_list, V_tr_list) = zip(*data)
+
+    _len = [len(seq) for seq in obs_seq_list]
+    cum_start_idx = [0] + np.cumsum(_len).tolist()
+    seq_start_end = [[start, end]
+                     for start, end in zip(cum_start_idx, cum_start_idx[1:])]
+
+    # Data format: batch, input_size, seq_len
+    # LSTM input format: seq_len, batch, input_size
+    obs_traj = torch.cat(obs_seq_list, dim=0).permute(2, 0, 1)
+    pred_traj = torch.cat(pred_seq_list, dim=0).permute(2, 0, 1)
+    obs_traj_rel = torch.cat(obs_seq_rel_list, dim=0).permute(2, 0, 1)
+    pred_traj_rel = torch.cat(pred_seq_rel_list, dim=0).permute(2, 0, 1)
+    non_linear_ped = torch.cat(non_linear_ped_list)
+    loss_mask = torch.cat(loss_mask_list, dim=0)
+    seq_start_end = torch.LongTensor(seq_start_end)
+
+    V_obs = torch.cat(V_obs_list, dim=1).unsqueeze(0)
+    V_tr = torch.cat(V_tr_list, dim=1).unsqueeze(0)
+
+    out = [
+        obs_traj, pred_traj, obs_traj_rel, pred_traj_rel, non_linear_ped,
+        loss_mask, V_obs, V_tr, seq_start_end
+    ]
+
+    return tuple(out)
+
+
+
+def seq_collate_(data):
     (obs_seq_list, pred_seq_list, obs_seq_rel_list, pred_seq_rel_list,
      non_linear_ped_list, loss_mask_list) = zip(*data)
 
@@ -215,6 +248,38 @@ class TrajectoryDataset(Dataset):
             for start, end in zip(cum_start_idx, cum_start_idx[1:])
         ]
 
+        # Convert to Graphs
+        self.v_obs = []
+        self.v_pred = []
+        print("Processing Data .....")
+        pbar = tqdm(total=len(self.seq_start_end))
+        for ss in range(len(self.seq_start_end)):
+            pbar.update(1)
+
+            start, end = self.seq_start_end[ss]
+
+            v_= seq_to_graph(self.obs_traj[start:end, :], self.obs_traj_rel[start:end, :], True)
+            self.v_obs.append(v_.clone())
+            v_= seq_to_graph(self.pred_traj[start:end, :], self.pred_traj_rel[start:end, :], False)
+            self.v_pred.append(v_.clone())
+
+        pbar.close()
+
+    def __len__(self):
+        return self.num_seq
+
+    def __getitem__(self, index):
+        start, end = self.seq_start_end[index]
+
+        out = [
+            self.obs_traj[start:end, :], self.pred_traj[start:end, :],
+            self.obs_traj_rel[start:end, :], self.pred_traj_rel[start:end, :],
+            self.non_linear_ped[start:end], self.loss_mask[start:end, :],
+            self.v_obs[index], self.v_pred[index]
+        ]
+        return out
+
+'''
     def __len__(self):
         return self.num_seq
 
@@ -226,3 +291,4 @@ class TrajectoryDataset(Dataset):
             self.non_linear_ped[start:end], self.loss_mask[start:end, :]
         ]
         return out
+'''
