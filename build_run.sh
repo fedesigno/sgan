@@ -1,10 +1,10 @@
-docker rmi eidos-service.di.unito.it/signoretta/sgan:sgcn_zara2
-docker build -t eidos-service.di.unito.it/signoretta/sgan:sgcn_zara2 . -f Dockerfile
-docker push eidos-service.di.unito.it/signoretta/sgan:sgcn_zara2
+docker rmi eidos-service.di.unito.it/signoretta/sgan:sgcn_eth
+docker build -t eidos-service.di.unito.it/signoretta/sgan:sgcn_eth . -f Dockerfile
+docker push eidos-service.di.unito.it/signoretta/sgan:sgcn_eth
 
-docker service rm signoretta-sgan-sgcn_zara2
-submit eidos-service.di.unito.it/signoretta/sgan:sgcn_zara2 train_SGCN_GEN.py \
-  --dataset_name 'zara2' \
+docker service rm signoretta-sgan-sgcn_eth
+submit eidos-service.di.unito.it/signoretta/sgan:sgcn_eth train_SGCN_GEN.py \
+  --dataset_name 'eth' \
   --delim tab \
   --d_type 'local' \
   --pred_len 12 \
@@ -41,6 +41,6 @@ submit eidos-service.di.unito.it/signoretta/sgan:sgcn_zara2 train_SGCN_GEN.py \
   --tag 'with_SGCN' \
   --dataset_dir_synth '/data/trajgan/datasets/datasets_synthetic' 
 
-docker service logs -f signoretta-sgan-sgcn_zara2
+docker service logs -f signoretta-sgan-sgcn_eth
 
-#  --dataset_dir_synth '/data/trajgan/datasets/datasets_sgcn_zara2' \
+#  --dataset_dir_synth '/data/trajgan/datasets/datasets_sgcn_eth' \

@@ -272,17 +272,25 @@ def main(args):
     eval_dict = {'min_ade': None, 'min_fde': None}
     t0 = None
 
-    while t < args.num_iterations:
+    for epoch in range(3000): #while t < args.num_iterations:
+        last_iter = False
+
+    
         gc.collect()
         d_steps_left = args.d_steps
         g_steps_left = args.g_steps
         p_steps_left = args.p_steps
-        epoch += 1
+        #epoch += 1
         logger.info('Starting epoch {}'.format(epoch))
-        for batch in zip(train_loader, jta_loader):
+        for t, batch in enumerate(zip(train_loader, jta_loader)):
             if args.timing == 1:
                 torch.cuda.synchronize()
                 t1 = time.time()
+            
+            if t==len(train_loader):
+                print('ln', len(train_loader, jta_loader))
+                last_iter=True
+
 
             # Decide whether to use the batch for stepping on discriminator or
             # predictor; an iteration consists of args.d_steps steps on the
@@ -301,7 +309,7 @@ def main(args):
                 losses_p = predictor_step(args, batch, predictor,
                                           discriminator, generator,
                                           g_loss_fn,
-                                          optimizer_p)
+                                          optimizer_p, last_iter)
                 checkpoint['norm_p'].append(
                     get_total_norm(predictor.parameters())
                 )
@@ -331,12 +339,6 @@ def main(args):
             if d_steps_left > 0 or g_steps_left > 0 or p_steps_left > 0:
                 continue
 
-            if args.timing == 1:
-                if t0 is not None:
-                    logger.info('Interation {} took {}'.format(
-                        t - 1, time.time() - t0
-                    ))
-                t0 = time.time()
 
             # Maybe save loss
             if t % args.print_every == 0:

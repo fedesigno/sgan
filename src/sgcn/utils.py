@@ -40,6 +40,7 @@ def loc_pos(seq_):
     return result
 
 
+
 def seq_to_graph(seq_, seq_rel, pos_enc=False):
     seq_ = seq_.squeeze()
     seq_rel = seq_rel.squeeze()
@@ -60,8 +61,8 @@ def seq_to_graph(seq_, seq_rel, pos_enc=False):
 
 def seq_to_graph_ts(seq_, seq_rel, pos_enc=False):
     #seq_, seq_rel = seq_.cpu().numpy(), seq_rel.cpu().numpy()
-    seq_ = seq_.squeeze()
-    seq_rel = seq_rel.squeeze()
+    #seq_ = seq_.squeeze()
+    #seq_rel = seq_rel.squeeze()
     seq_len = seq_.shape[0]
     max_nodes = seq_.shape[1]
 
@@ -73,7 +74,7 @@ def seq_to_graph_ts(seq_, seq_rel, pos_enc=False):
             V[s, h, :] = step_rel[h]
 
     if pos_enc:
-        V = loc_pos(V)
+        V = loc_pos_ts(V)
 
     return V
 

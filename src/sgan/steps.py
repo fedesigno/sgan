@@ -2,13 +2,14 @@ import torch
 import torch.nn as nn
 from sgan.utils import relative_to_abs
 from sgan.losses import l2_loss
-from sgcn.utils import seq_to_graph
+from sgcn.utils import seq_to_graph, seq_to_graph_ts
 from sgcn.metrics import graph_loss, seq_to_nodes, nodes_rel_to_nodes_abs
+
 
 import matplotlib.pyplot as plt
 import os
 
-def traj_plot(batch, title, k):
+def traj_plot(args, batch, title, k):
     if k==0:
         c='y.'
     elif k==1:
@@ -16,7 +17,7 @@ def traj_plot(batch, title, k):
     elif k==2:
         c='b.'
 
-    plot_dir = "/scratch/sgan/src/plots/"
+    plot_dir = "/scratch/sgan/src/plot"
     if not os.path.exists(plot_dir):
         os.makedirs(plot_dir)
 
@@ -25,8 +26,9 @@ def traj_plot(batch, title, k):
     plt.plot(x.detach().numpy(), y.detach().numpy(), c, alpha=0.4)
     plt.plot(x.detach().numpy(), y.detach().numpy(), 'k-', alpha=0.2)
     plt.title('trajectories-'+title)
-    plt.savefig(plot_dir+title+".png")
+    plt.savefig(plot_dir+"/"+title+".png")
     plt.close()
+
 
 def discriminator_step(
     args, batch_, predictor, discriminator, generator, d_loss_fn, d_loss_g_fn, optimizer_d
@@ -46,6 +48,22 @@ def discriminator_step(
             pred_traj_fake = relative_to_abs(pred_traj_fake_rel, obs_traj[-1])  
             obs_traj_rel, pred_traj_gt_rel = torch.split(pred_traj_fake_rel, [8,12])
             obs_traj, pred_traj_gt = torch.split(pred_traj_fake, [8,12])
+
+            V_obs = seq_to_graph_ts(
+                obs_traj,#.permute(1, 2, 0), 
+                obs_traj_rel, 
+                True
+                ).unsqueeze(0)
+            V_tr = seq_to_graph_ts(
+                pred_traj_gt, 
+                pred_traj_gt_rel, 
+                False
+                ).unsqueeze(0)
+            type_ = 'jta'
+        else:
+            type_ = 'real'
+
+
 
 
         identity_spatial = torch.ones((V_obs.shape[1], V_obs.shape[2], V_obs.shape[2]), device='cuda') * \
@@ -75,6 +93,11 @@ def discriminator_step(
         traj_fake = torch.cat([obs_traj, pred_traj_fake], dim=0)
         traj_fake_rel = torch.cat([obs_traj_rel, pred_traj_fake_rel], dim=0)
 
+        traj_plot(args, traj_real, type_+"_from_gt", 0)
+        traj_plot(args, traj_fake, type_+"_from_pred", 1)
+
+
+
         scores_fake = discriminator(traj_fake, traj_fake_rel, seq_start_end)
         scores_real = discriminator(traj_real, traj_real_rel, seq_start_end)
 
@@ -95,12 +118,11 @@ def discriminator_step(
                                         args.clipping_threshold_d)
         optimizer_d.step()
 
-
     return losses
 
 
 def predictor_step(
-args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p
+args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p, last_iter
 ):
     for i, batch in enumerate(batch_):
         batch = [tensor.cuda() for tensor in batch]
@@ -115,6 +137,19 @@ args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p
             pred_traj_fake = relative_to_abs(pred_traj_fake_rel, obs_traj[-1])  
             obs_traj_rel, pred_traj_gt_rel = torch.split(pred_traj_fake_rel, [8,12])
             obs_traj, pred_traj_gt = torch.split(pred_traj_fake, [8,12])
+
+            V_obs = seq_to_graph_ts(
+                obs_traj,#.permute(1, 2, 0), 
+                obs_traj_rel, 
+                True
+                ).unsqueeze(0)
+            V_tr = seq_to_graph_ts(
+                pred_traj_gt, 
+                pred_traj_gt_rel, 
+                False
+                ).unsqueeze(0)
+
+        optimizer_p.zero_grad()
 
         losses = {}
 
@@ -139,9 +174,6 @@ args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p
         pred_traj_fake = V_rel_to_abs
         pred_traj_fake_rel = V_pred[:,:,:2]
 
-        l = graph_loss(V_pred, V_tr)
-        loss += l
-        losses['P_graph_loss'] = l.item()
 
         traj_fake = torch.cat([obs_traj, pred_traj_fake], dim=0)
         #traj_plot(traj_fake, 'fake_from_pred', 0)
@@ -152,15 +184,26 @@ args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p
 
         loss += discriminator_loss
         losses['P_discriminator_loss'] = discriminator_loss.item()
+ 
+        l = graph_loss(V_pred, V_tr)
+        losses['P_graph_loss'] = l.item()
+
+        loss+=l
+
         losses['P_total_loss'] = loss.item()
 
-        optimizer_p.zero_grad()
-        loss.backward()
-        if args.clipping_threshold_g > 0:
-            nn.utils.clip_grad_norm_(
-                predictor.parameters(), 10
-            )
-        optimizer_p.step()
+
+        
+        if last_iter:
+            loss.backward()
+            if args.clipping_threshold_g > 0:
+                nn.utils.clip_grad_norm_(
+                    predictor.parameters(), 10
+                )
+            optimizer_p.step()
+            if args.clip_grad is not None:
+                torch.nn.utils.clip_grad_norm_(predictor.parameters(), args.clip_grad)
+
         return losses
 
 
@@ -223,4 +266,3 @@ args, batch, generator, discriminator, g_loss_fn, optimizer_g
         )
     optimizer_g.step()
     return losses
-
