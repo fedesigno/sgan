@@ -8,6 +8,7 @@ from sgcn.metrics import graph_loss, seq_to_nodes, nodes_rel_to_nodes_abs
 
 import matplotlib.pyplot as plt
 import os
+import wandb
 
 def traj_plot(args, batch, title, k):
     if k==0:
@@ -17,21 +18,19 @@ def traj_plot(args, batch, title, k):
     elif k==2:
         c='b.'
 
-    plot_dir = "/scratch/sgan/src/plot"
-    if not os.path.exists(plot_dir):
-        os.makedirs(plot_dir)
-
     x = batch[:,:,0].cpu()
     y = batch[:,:,1].cpu()
     plt.plot(x.detach().numpy(), y.detach().numpy(), c, alpha=0.4)
     plt.plot(x.detach().numpy(), y.detach().numpy(), 'k-', alpha=0.2)
     plt.title('trajectories-'+title)
-    plt.savefig(plot_dir+"/"+title+".png")
+    wandb.log({f"{title}": plt})
+
     plt.close()
 
 
+
 def discriminator_step(
-    args, batch_, predictor, discriminator, generator, d_loss_fn, d_loss_g_fn, optimizer_d
+    args, batch_, predictor, discriminator, generator, d_loss_fn, d_loss_g_fn, optimizer_d, t, epoch
 ):
     for i, batch in enumerate(batch_):
         batch = [tensor.cuda() for tensor in batch]
@@ -81,8 +80,8 @@ def discriminator_step(
         V_tr = V_tr.squeeze()
 
         V_x = obs_traj #seq_to_nodes(obs_traj_, n) #.cpu().numpy().copy(), n)
-        V_rel_to_abs = nodes_rel_to_nodes_abs(V_pred[:,:,:2], #.detach().cpu().numpy().copy(),
-                                                 V_x[-1,:,:]) #.copy())
+        V_rel_to_abs = relative_to_abs(V_pred[:,:,:2], #.detach().cpu().numpy().copy(),
+                                                 V_x[-1]) #.copy())
 
 
         pred_traj_fake = V_rel_to_abs
@@ -118,11 +117,14 @@ def discriminator_step(
                                         args.clipping_threshold_d)
         optimizer_d.step()
 
+        losses['t'] = t
+        losses['epoch'] = epoch
+
     return losses
 
 
 def predictor_step(
-args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p, last_iter
+args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p, last_iter, t, epoch
 ):
     for i, batch in enumerate(batch_):
         batch = [tensor.cuda() for tensor in batch]
@@ -166,17 +168,16 @@ args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p, last_
 
         V_pred = V_pred.squeeze()
         V_tr = V_tr.squeeze()
+ 
+        V_rel_to_abs = relative_to_abs(V_pred[:,:,:2], obs_traj[-1]) 
 
-        V_x = obs_traj #seq_to_nodes(obs_traj_, n) 
-        V_rel_to_abs = nodes_rel_to_nodes_abs(V_pred[:,:,:2], 
-                                                 V_x[-1,:,:]) 
 
         pred_traj_fake = V_rel_to_abs
         pred_traj_fake_rel = V_pred[:,:,:2]
 
 
         traj_fake = torch.cat([obs_traj, pred_traj_fake], dim=0)
-        #traj_plot(traj_fake, 'fake_from_pred', 0)
+        traj_plot(args, traj_fake, '_from_pred', 0)
         traj_fake_rel = torch.cat([obs_traj_rel, pred_traj_fake_rel], dim=0)
 
         scores_fake = discriminator(traj_fake, traj_fake_rel, seq_start_end)
@@ -192,23 +193,20 @@ args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p, last_
 
         losses['P_total_loss'] = loss.item()
 
-
-        
-        if last_iter:
-            loss.backward()
-            if args.clipping_threshold_g > 0:
-                nn.utils.clip_grad_norm_(
-                    predictor.parameters(), 10
-                )
-            optimizer_p.step()
-            if args.clip_grad is not None:
-                torch.nn.utils.clip_grad_norm_(predictor.parameters(), args.clip_grad)
-
+        #if last_iter:
+        loss.backward()
+        if args.clipping_threshold_g > 0:
+            nn.utils.clip_grad_norm_(
+                predictor.parameters(), 10
+            )
+        optimizer_p.step()
+        losses['t'] = t
+        losses['epoch'] = epoch
         return losses
 
 
 def generator_step(
-args, batch, generator, discriminator, g_loss_fn, optimizer_g
+args, batch, generator, discriminator, g_loss_fn, optimizer_g, t, epoch
 ):
     batch = [tensor.cuda() for tensor in batch]
     obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped, \
@@ -265,4 +263,6 @@ args, batch, generator, discriminator, g_loss_fn, optimizer_g
             generator.parameters(), args.clipping_threshold_g
         )
     optimizer_g.step()
+    losses['t'] = t
+    losses['epoch'] = epoch
     return losses

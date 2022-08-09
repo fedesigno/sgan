@@ -213,7 +213,7 @@ def main(args):
         generator.parameters(), lr=args.g_learning_rate
     )
 
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer_d, milestones=[50, 100], gamma=0.5)
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer_p, milestones=[50, 100], gamma=0.5)
     # Maybe restore from checkpoint
     restore_path = None
     if args.checkpoint_start_from is not None:
@@ -269,13 +269,12 @@ def main(args):
             'best_t_nl': None,
         }
     
-    eval_dict = {'min_ade': None, 'min_fde': None}
+    eval_dict = {'min_ade': None, 'min_fde': None, 't': 0, 'epoch': 0}
     t0 = None
 
-    for epoch in range(3000): #while t < args.num_iterations:
+    for epoch in range(500): #while t < args.num_iterations:
         last_iter = False
 
-    
         gc.collect()
         d_steps_left = args.d_steps
         g_steps_left = args.g_steps
@@ -287,46 +286,51 @@ def main(args):
                 torch.cuda.synchronize()
                 t1 = time.time()
             
-            if t==len(train_loader):
-                print('ln', len(train_loader, jta_loader))
+            if t>=len(train_loader)-1:
+                print('length:', len(train_loader))
                 last_iter=True
 
 
             # Decide whether to use the batch for stepping on discriminator or
             # predictor; an iteration consists of args.d_steps steps on the
             # discriminator followed by args.g_steps steps on the predictor.
-            if d_steps_left > 0:
-                step_type = 'd'
-                losses_d = discriminator_step(args, batch, predictor,
-                                              discriminator, generator,
-                                              d_loss_fn, d_loss_g_fn,
-                                              optimizer_d)
-                checkpoint['norm_d'].append(
-                    get_total_norm(discriminator.parameters()))
-                d_steps_left -= 1
-            elif p_steps_left > 0:
-                step_type = 'p'
-                losses_p = predictor_step(args, batch, predictor,
-                                          discriminator, generator,
-                                          g_loss_fn,
-                                          optimizer_p, last_iter)
-                checkpoint['norm_p'].append(
-                    get_total_norm(predictor.parameters())
-                )
-                p_steps_left -= 1
 
+            #if g_steps_left > 0:
+            step_type = 'g'
+            losses_g = generator_step(args, batch[1], generator,
+                                        discriminator, g_loss_fn,
+                                        optimizer_g, t, epoch)
+            checkpoint['norm_g'].append(
+                get_total_norm(generator.parameters())
+            )
+            g_steps_left -= 1
 
-            elif g_steps_left > 0:
-                step_type = 'g'
-                losses_g = generator_step(args, batch[1], generator,
-                                          discriminator, g_loss_fn,
-                                          optimizer_g)
-                checkpoint['norm_g'].append(
-                    get_total_norm(predictor.parameters())
-                )
-                g_steps_left -= 1
+            #elif p_steps_left > 0:
+            step_type = 'p'
+            losses_p = predictor_step(args, batch, predictor,
+                                        discriminator, generator,
+                                        g_loss_fn,
+                                        optimizer_p, last_iter, t, epoch)
+            checkpoint['norm_p'].append(
+                get_total_norm(predictor.parameters())
+            )
+            p_steps_left -= 1
+
+            #elif d_steps_left > 0:
+            step_type = 'd'
+            losses_d = discriminator_step(args, batch, predictor,
+                                            discriminator, generator,
+                                            d_loss_fn, d_loss_g_fn,
+                                            optimizer_d, t, epoch)
+            checkpoint['norm_d'].append(
+                get_total_norm(discriminator.parameters()))
+            d_steps_left -= 1
                 
             scheduler.step()
+
+            wandb.log(losses_d)
+            wandb.log(losses_g)
+            wandb.log(losses_p)
 
             if args.timing == 1:
                 torch.cuda.synchronize()
@@ -334,10 +338,9 @@ def main(args):
                 logger.info('{} step took {}'.format(step_type, t2 - t1))
             
 
-
             # Skip the rest if we are not at the end of an iteration
-            if d_steps_left > 0 or g_steps_left > 0 or p_steps_left > 0:
-                continue
+            #if d_steps_left > 0 or g_steps_left > 0 or p_steps_left > 0:
+                #continue
 
 
             # Maybe save loss
@@ -357,51 +360,54 @@ def main(args):
                 checkpoint['losses_ts'].append(t)
 
             # Maybe save a checkpoint
-            if t > 0 and t % args.checkpoint_every == 0:
-                checkpoint['counters']['t'] = t
-                checkpoint['counters']['epoch'] = epoch
-                checkpoint['sample_ts'].append(t)
+            #if t > 0 and t % args.checkpoint_every == 0:
+            checkpoint['counters']['t'] = t
+            checkpoint['counters']['epoch'] = epoch
+            checkpoint['sample_ts'].append(t)
 
-                # Check stats on the validation set
-                logger.info('Checking stats on val ...')
-                metrics_val = check_accuracy(
-                    args, val_loader, predictor, discriminator, d_loss_fn
-                )
-                logger.info('Checking stats on train ...')
-                metrics_train = check_accuracy(
-                    args, train_loader, predictor, discriminator,
-                    d_loss_fn, limit=True
-                )
-                metrics_jta = check_accuracy(
-                    args, jta_loader, predictor, discriminator,
-                    d_loss_fn, limit=True
-                )
-                wandb.log({
-                        'train': metrics_train, 
-                        'val': metrics_val, 
-                        'jta': metrics_jta,
-                        'epoch': epoch,
-                        't': t
-                    })
+            # Check stats on the validation set
 
-                for k, v in sorted(metrics_val.items()):
-                    logger.info('  [val] {}: {:.3f}'.format(k, v))
-                    checkpoint['metrics_val'][k].append(v)
-                for k, v in sorted(metrics_train.items()):
-                    logger.info('  [train] {}: {:.3f}'.format(k, v))
-                    checkpoint['metrics_train'][k].append(v)
-                for k, v in sorted(metrics_train.items()):
-                    logger.info('  [jta] {}: {:.3f}'.format(k, v))
-                    checkpoint['metrics_jta'][k].append(v)
+            #if last_iter:
+            #logger.info('Checking stats on val ...')
+            metrics_val = check_accuracy(
+                args, val_loader, predictor, discriminator, d_loss_fn, t, epoch
+            )
+            '''
+            logger.info('Checking stats on train ...')
+            metrics_train = check_accuracy(
+                args, train_loader, predictor, discriminator,
+                d_loss_fn, limit=True
+            )
+            metrics_jta = check_accuracy(
+                args, jta_loader, predictor, discriminator,
+                d_loss_fn, limit=True
+            )
+            wandb.log(metrics_train, step=t)
+            wandb.log(metrics_jta, step=t)
+            '''
+            wandb.log(metrics_val)
 
-                min_ade = min(checkpoint['metrics_val']['ade'])
-                min_fde = min(checkpoint['metrics_val']['fde'])
+            for k, v in sorted(metrics_val.items()):
+                logger.info('  [val] {}: {:.3f}'.format(k, v))
+                checkpoint['metrics_val'][k].append(v)
+            '''
+            for k, v in sorted(metrics_train.items()):
+                logger.info('  [train] {}: {:.3f}'.format(k, v))
+                checkpoint['metrics_train'][k].append(v)
+            for k, v in sorted(metrics_train.items()):
+                logger.info('  [jta] {}: {:.3f}'.format(k, v))
+                checkpoint['metrics_jta'][k].append(v)
+            '''
 
-                if metrics_val['ade'] == min_ade:
-                    logger.info('New low for avg_disp_error')
-                    checkpoint['best_t'] = t
-                    checkpoint['g_best_state'] = predictor.state_dict()
-                    checkpoint['d_best_state'] = discriminator.state_dict()
+            min_ade = min(checkpoint['metrics_val']['ade'])
+            min_fde = min(checkpoint['metrics_val']['fde'])
+
+
+            if metrics_val['ade'] == min_ade:
+                logger.info('New low for avg_disp_error')
+                checkpoint['best_t'] = t
+                checkpoint['g_best_state'] = predictor.state_dict()
+                checkpoint['d_best_state'] = discriminator.state_dict()
 
 
                 # Save another checkpoint with model weights and
@@ -415,14 +421,10 @@ def main(args):
 
                 eval_dict['min_ade'] = min_ade
                 eval_dict['min_fde'] = min_fde
+                eval_dict['t'] = t
+                eval_dict['epoch'] = epoch
 
-                wandb.log({
-                        'train': metrics_train, 
-                        'val': metrics_val, 
-                        'best': eval_dict,
-                        'epoch': epoch,
-                        't': t
-                    })
+
  
                 out_path = os.path.join(args.output_dir, args.tag)
                 out_name = args.dataset_name +'_'+args.tag
@@ -435,12 +437,13 @@ def main(args):
                 torch.save(checkpoint, checkpoint_path)
                 logger.info('Done.')
 
+                wandb.log(eval_dict)
 
-            t += 1
+
             d_steps_left = args.d_steps
             g_steps_left = args.g_steps
-            if t >= args.num_iterations:
-                break
+            #if t >= args.num_iterations:
+                #break
 
 
 if __name__ == '__main__':

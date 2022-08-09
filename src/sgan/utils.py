@@ -1,4 +1,5 @@
 import os
+from re import T
 import time
 import torch
 import torch.nn as nn
@@ -10,6 +11,9 @@ import subprocess
 from sgan.losses import cal_l2_losses, l2_loss, displacement_error, final_displacement_error
 from sgcn.utils import seq_to_graph
 from sgcn.metrics import seq_to_nodes, nodes_rel_to_nodes_abs
+
+import torch.distributions.multivariate_normal as torchdist
+import copy
 
 
 
@@ -116,7 +120,7 @@ def evaluate_helper(error, seq_start_end):
     return sum_
 
 def check_accuracy(
-    args, loader, predictor, discriminator, d_loss_fn, limit=False):
+    args, loader, predictor, discriminator, d_loss_fn, t, epoch, limit=False):
 
     d_losses = []
     metrics = {}
@@ -170,6 +174,7 @@ def check_accuracy(
             ade_outer.append(ade_sum)
             fde_outer.append(fde_sum)
 
+            '''
             traj_real = torch.cat([obs_traj, pred_traj_gt], dim=0)
             traj_real_rel = torch.cat([obs_traj_rel, pred_traj_gt_rel], dim=0)
             traj_fake = torch.cat([obs_traj, pred_traj_fake], dim=0)
@@ -189,22 +194,25 @@ def check_accuracy(
             g_l2_losses_abs.append(g_l2_loss_abs.item())
             g_l2_losses_rel.append(g_l2_loss_rel.item())
 
-
+            '''
             loss_mask_sum += torch.numel(loss_mask.data)
 
             total_traj_nl += torch.sum(non_linear_ped).item()
             if limit and total_traj >= args.num_samples_check:
                 break
+            
 
         ade_ = sum(ade_outer) / (total_traj * args.pred_len)
         fde_ = sum(fde_outer) / (total_traj)
 
-        metrics['d_loss'] = sum(d_losses) / len(d_losses)
-        metrics['g_l2_loss_abs'] = sum(g_l2_losses_abs) / loss_mask_sum
-        metrics['g_l2_loss_rel'] = sum(g_l2_losses_rel) / loss_mask_sum
+        #metrics['d_loss'] = sum(d_losses) / len(d_losses)
+        #metrics['g_l2_loss_abs'] = sum(g_l2_losses_abs) / loss_mask_sum
+        #metrics['g_l2_loss_rel'] = sum(g_l2_losses_rel) / loss_mask_sum
 
         metrics['ade'] = ade_.cpu()
         metrics['fde'] = fde_.cpu()
+        metrics['t'] = t 
+        metrics['epoch'] = epoch
 
         predictor.train()
 
@@ -223,3 +231,127 @@ def init_weights(m):
     if classname.find('Linear') != -1:
         nn.init.kaiming_normal_(m.weight)
 
+
+
+
+def check_accuracy_(
+    args, loader, predictor, discriminator, d_loss_fn, t, epoch, limit=False):
+    raw_data_dict = {}
+    ade_bigls = []
+    fde_bigls = []
+
+    step =0
+    d_losses = []
+    metrics = {}
+    g_l2_losses_abs, g_l2_losses_rel = ([],) * 2
+    disp_error, disp_error_l, disp_error_nl = ([],) * 3
+    f_disp_error, f_disp_error_l, f_disp_error_nl = ([],) * 3
+    total_traj, total_traj_l, total_traj_nl = 0, 0, 0
+    ade_outer, fde_outer = [], []
+
+    loss_mask_sum = 0
+    predictor.eval()
+
+    with torch.no_grad():
+        for batch in loader:
+            batch = [tensor.cuda() for tensor in batch]
+            obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped, \
+            loss_mask, V_obs, V_tr, seq_start_end = batch
+
+            loss_mask = loss_mask[:, args.obs_len:]
+
+            ade, fde = [], []
+            total_traj += pred_traj_gt.size(1)
+
+            identity_spatial = torch.ones((V_obs.shape[1], V_obs.shape[2], V_obs.shape[2]), device='cuda') * \
+                            torch.eye(V_obs.shape[2], device='cuda')  # [obs_len N N]
+            identity_temporal = torch.ones((V_obs.shape[2], V_obs.shape[1], V_obs.shape[1]), device='cuda') * \
+                                torch.eye(V_obs.shape[1], device='cuda')  # [N obs_len obs_len]
+            identity = [identity_spatial, identity_temporal]
+
+            V_pred = predictor(V_obs, identity)  # A_obs <8, #, #>
+            V_pred = V_pred.squeeze()
+            V_tr = V_tr.squeeze()
+
+            num_of_objs = obs_traj_rel.shape[1]
+            V_pred, V_tr = V_pred[:, :num_of_objs, :], V_tr[:, :num_of_objs, :]
+            #
+            # #For now I have my bi-variate parameters
+            # #normx =  V_pred[:,:,0:1]
+            # #normy =  V_pred[:,:,1:2]
+            sx = torch.exp(V_pred[:,:,2]) #sx
+            sy = torch.exp(V_pred[:,:,3]) #sy
+            corr = torch.tanh(V_pred[:,:,4]) #corr
+            #
+            cov = torch.zeros(V_pred.shape[0],V_pred.shape[1],2,2).cuda()
+            cov[:,:,0,0]= sx*sx
+            cov[:,:,0,1]= corr*sx*sy
+            cov[:,:,1,0]= corr*sx*sy
+            cov[:,:,1,1]= sy*sy
+            mean = V_pred[:,:,0:2]
+
+            mvnormal = torchdist.MultivariateNormal(mean,cov)
+            #
+            #
+            # ### Rel to abs
+            # ##obs_traj.shape = torch.Size([1, 6, 2, 8]) Batch, Ped ID, x|y, Seq Len
+            #
+            # #Now sample 20 samples
+            ade_ls = {}
+            fde_ls = {}
+            V_x = seq_to_nodes(obs_traj.data.cpu().numpy().copy())
+            V_x_rel_to_abs = nodes_rel_to_nodes_abs(V_obs[:,:,:,:2].data.cpu().numpy().squeeze().copy(),
+                                                    V_x[0,:,:].copy())
+            #
+            V_y = seq_to_nodes(pred_traj_gt.data.cpu().numpy().copy())
+            V_y_rel_to_abs = nodes_rel_to_nodes_abs(V_tr.data.cpu().numpy().squeeze().copy(),
+                                                    V_x[-1,:,:].copy())
+
+            raw_data_dict[step] = {}
+            raw_data_dict[step]['obs'] = copy.deepcopy(V_x_rel_to_abs)
+            raw_data_dict[step]['trgt'] = copy.deepcopy(V_y_rel_to_abs)
+            raw_data_dict[step]['pred'] = []
+            #
+            #
+            for n in range(num_of_objs):
+                ade_ls[n]=[]
+                fde_ls[n]=[]
+            #
+            for k in range(1):
+
+                V_pred = mvnormal.sample()
+
+                V_pred_rel_to_abs = nodes_rel_to_nodes_abs(V_pred.data.cpu().numpy().squeeze().copy(),
+                                                        V_x[-1,:,:].copy())
+
+                raw_data_dict[step]['pred'].append(copy.deepcopy(V_pred_rel_to_abs))
+
+
+                for n in range(num_of_objs):
+                    pred = []
+                    target = []
+                    obsrvs = []
+                    number_of = []
+                    pred.append(V_pred_rel_to_abs[:,n:n+1,:])
+                    target.append(V_y_rel_to_abs[:,n:n+1,:])
+                    obsrvs.append(V_x_rel_to_abs[:,n:n+1,:])
+                    number_of.append(1)
+            #
+                    ade_ls[n].append(ade(pred,target,number_of))
+                    fde_ls[n].append(fde(pred,target,number_of))
+
+            for n in range(num_of_objs):
+                ade_bigls.append(min(ade_ls[n]))
+                fde_bigls.append(min(fde_ls[n]))
+
+        ade_ = sum(ade_bigls)/len(ade_bigls)
+        fde_ = sum(fde_bigls)/len(fde_bigls)
+
+        metrics['ade'] = ade_
+        metrics['fde'] = fde_
+        metrics['t'] = t 
+        metrics['epoch'] = epoch
+
+        predictor.train()
+
+        return metrics

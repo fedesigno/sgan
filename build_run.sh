@@ -22,7 +22,7 @@ submit eidos-service.di.unito.it/signoretta/sgan:sgcn_eth train_SGCN_GEN.py \
   --l2_loss_weight 1 \
   --batch_norm 0 \
   --dropout 0 \
-  --batch_size 32 \
+  --batch_size 128 \
   --g_learning_rate 1e-3 \
   --g_steps 1 \
   --d_learning_rate 1e-3 \
