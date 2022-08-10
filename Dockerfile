@@ -5,9 +5,9 @@ RUN chmod 775 /src
 RUN chown -R :1337 /src
 
 
-RUN mkdir /scratch
-RUN chmod 775 /scratch
-RUN chown -R :1337 /scratch
+#RUN mkdir /scratch
+#RUN chmod 775 /scratch
+#RUN chown -R :1337 /scratch
 
 WORKDIR /src
 

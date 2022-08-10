@@ -18,8 +18,8 @@ def traj_plot(args, batch, title, k):
     elif k==2:
         c='b.'
 
-    x = batch[:,:,0].cpu()
-    y = batch[:,:,1].cpu()
+    x = batch[:,:10,0].cpu()
+    y = batch[:,:10,1].cpu()
     plt.plot(x.detach().numpy(), y.detach().numpy(), c, alpha=0.4)
     plt.plot(x.detach().numpy(), y.detach().numpy(), 'k-', alpha=0.2)
     plt.title('trajectories-'+title)
@@ -27,11 +27,35 @@ def traj_plot(args, batch, title, k):
 
     plt.close()
 
+def traj_plot_compare(batch_gt, batch, title):
+
+    x = batch_gt[:,:10,0].cpu()
+    y = batch_gt[:,:10,1].cpu()
+
+    plt.plot(x[:9].detach().numpy(), y[:9].detach().numpy(), "y.", alpha=0.4)
+    plt.plot(x[:9].detach().numpy(), y[:9].detach().numpy(), 'k-', alpha=0.2)
+
+    plt.plot(x[8:].detach().numpy(), y[8:].detach().numpy(), "g.", alpha=0.4)
+    plt.plot(x[8:].detach().numpy(), y[8:].detach().numpy(), 'k-', alpha=0.2)
+
+    x = batch[:,:10,0].cpu()
+    y = batch[:,:10,1].cpu()
+
+    plt.plot(x[8:].detach().numpy(), y[8:].detach().numpy(), "b.", alpha=0.4)
+    plt.plot(x[8:].detach().numpy(), y[8:].detach().numpy(), 'k-', alpha=0.2)
+
+
+
+    plt.title('trajectories-'+title)
+    wandb.log({f"{title}": plt})
+
+    plt.close()
 
 
 def discriminator_step(
     args, batch_, predictor, discriminator, generator, d_loss_fn, d_loss_g_fn, optimizer_d, t, epoch
 ):
+    
     for i, batch in enumerate(batch_):
         batch = [tensor.cuda() for tensor in batch]
         #(obs_traj, pred_traj_gt, obs_traj_rel, pred_traj_gt_rel, non_linear_ped,
@@ -64,7 +88,6 @@ def discriminator_step(
 
 
 
-
         identity_spatial = torch.ones((V_obs.shape[1], V_obs.shape[2], V_obs.shape[2]), device='cuda') * \
                            torch.eye(V_obs.shape[2], device='cuda')  # [obs_len N N]
         identity_temporal = torch.ones((V_obs.shape[2], V_obs.shape[1], V_obs.shape[1]), device='cuda') * \
@@ -92,9 +115,9 @@ def discriminator_step(
         traj_fake = torch.cat([obs_traj, pred_traj_fake], dim=0)
         traj_fake_rel = torch.cat([obs_traj_rel, pred_traj_fake_rel], dim=0)
 
-        traj_plot(args, traj_real, type_+"_from_gt", 0)
-        traj_plot(args, traj_fake, type_+"_from_pred", 1)
-
+        if t==1:
+            traj_plot(args, traj_real, type_+"_from_gt", 0)
+            traj_plot(args, traj_fake, type_+"_from_pred", 1)
 
 
         scores_fake = discriminator(traj_fake, traj_fake_rel, seq_start_end)
@@ -177,8 +200,11 @@ args, batch_, predictor, discriminator, generator, g_loss_fn, optimizer_p, last_
 
 
         traj_fake = torch.cat([obs_traj, pred_traj_fake], dim=0)
-        traj_plot(args, traj_fake, '_from_pred', 0)
         traj_fake_rel = torch.cat([obs_traj_rel, pred_traj_fake_rel], dim=0)
+
+        traj = torch.cat([obs_traj, pred_traj_gt], dim=0)
+        if t==1:
+            traj_plot_compare(traj, traj_fake, '_from_pred')
 
         scores_fake = discriminator(traj_fake, traj_fake_rel, seq_start_end)
         discriminator_loss = g_loss_fn(scores_fake)
@@ -245,8 +271,8 @@ args, batch, generator, discriminator, g_loss_fn, optimizer_g, t, epoch
 
     traj_fake = pred_traj_fake 
     traj_fake_rel = pred_traj_fake_rel 
-
-    #traj_plot(traj_fake, 'fake_from_gen', 1)
+    if t==1:
+        traj_plot(args, traj_fake, 'fake_from_gen', 1)
 
     scores_fake = discriminator(traj_fake, traj_fake_rel, seq_start_end)
     discriminator_loss = g_loss_fn(scores_fake)

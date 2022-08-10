@@ -8,6 +8,7 @@ import time
 import wandb
 
 from collections import defaultdict
+from tqdm import tqdm
 
 import torch
 import torch.nn as nn
@@ -88,11 +89,11 @@ parser.add_argument('--d_steps', default=2, type=int)
 parser.add_argument('--clipping_threshold_d', default=0, type=float)
 
 # Loss Options
-parser.add_argument('--l2_loss_weight', default=0, type=float)
+parser.add_argument('--l2_loss_weight', default=1, type=float)
 parser.add_argument('--best_k', default=1, type=int)
 
 # Output
-parser.add_argument('--output_dir', default='/scratch/sgan/src/checkpoint')
+parser.add_argument('--output_dir', default='src/checkpoint')
 parser.add_argument('--print_every', default=5, type=int)
 parser.add_argument('--checkpoint_every', default=100, type=int)
 parser.add_argument('--checkpoint_name', default='checkpoint')
@@ -272,7 +273,7 @@ def main(args):
     eval_dict = {'min_ade': None, 'min_fde': None, 't': 0, 'epoch': 0}
     t0 = None
 
-    for epoch in range(500): #while t < args.num_iterations:
+    for epoch in range(args.num_epochs): #while t < args.num_iterations:
         last_iter = False
 
         gc.collect()
@@ -281,14 +282,13 @@ def main(args):
         p_steps_left = args.p_steps
         #epoch += 1
         logger.info('Starting epoch {}'.format(epoch))
-        for t, batch in enumerate(zip(train_loader, jta_loader)):
+        for t, batch in enumerate(tqdm(zip(train_loader, jta_loader), desc=f"Epoch {epoch}")):
             if args.timing == 1:
                 torch.cuda.synchronize()
                 t1 = time.time()
             
-            if t>=len(train_loader)-1:
-                print('length:', len(train_loader))
-                last_iter=True
+            #if t>=len(train_loader)-2:
+                #last_iter=True
 
 
             # Decide whether to use the batch for stepping on discriminator or
@@ -296,6 +296,7 @@ def main(args):
             # discriminator followed by args.g_steps steps on the predictor.
 
             #if g_steps_left > 0:
+            
             step_type = 'g'
             losses_g = generator_step(args, batch[1], generator,
                                         discriminator, g_loss_fn,
@@ -317,14 +318,15 @@ def main(args):
             p_steps_left -= 1
 
             #elif d_steps_left > 0:
-            step_type = 'd'
-            losses_d = discriminator_step(args, batch, predictor,
-                                            discriminator, generator,
-                                            d_loss_fn, d_loss_g_fn,
-                                            optimizer_d, t, epoch)
-            checkpoint['norm_d'].append(
-                get_total_norm(discriminator.parameters()))
-            d_steps_left -= 1
+            for _ in range(1):
+                step_type = 'd'
+                losses_d = discriminator_step(args, batch, predictor,
+                                                discriminator, generator,
+                                                d_loss_fn, d_loss_g_fn,
+                                                optimizer_d, t, epoch)
+                checkpoint['norm_d'].append(
+                    get_total_norm(discriminator.parameters()))
+                d_steps_left -= 1
                 
             scheduler.step()
 
@@ -344,8 +346,8 @@ def main(args):
 
 
             # Maybe save loss
-            if t % args.print_every == 0:
-                logger.info('t = {} / {}'.format(t + 1, args.num_iterations))
+            if t > 0:
+                logger.info('t = {} / {}'.format(t,len(train_loader)))
                 for k, v in sorted(losses_d.items()):
                     logger.info('  [D] {}: {:.3f}'.format(k, v))
                     checkpoint['D_losses'][k].append(v)
@@ -366,85 +368,88 @@ def main(args):
             checkpoint['sample_ts'].append(t)
 
             # Check stats on the validation set
+            
 
-            #if last_iter:
+      
             #logger.info('Checking stats on val ...')
-            metrics_val = check_accuracy(
-                args, val_loader, predictor, discriminator, d_loss_fn, t, epoch
-            )
-            '''
-            logger.info('Checking stats on train ...')
-            metrics_train = check_accuracy(
-                args, train_loader, predictor, discriminator,
-                d_loss_fn, limit=True
-            )
-            metrics_jta = check_accuracy(
-                args, jta_loader, predictor, discriminator,
-                d_loss_fn, limit=True
-            )
-            wandb.log(metrics_train, step=t)
-            wandb.log(metrics_jta, step=t)
-            '''
-            wandb.log(metrics_val)
+            if t%10==0:
+                try:
+                    metrics_val = check_accuracy(
+                        args, val_loader, predictor, discriminator, d_loss_fn, t, epoch
+                    )
+                    '''
+                    logger.info('Checking stats on train ...')
+                    metrics_train = check_accuracy(
+                        args, train_loader, predictor, discriminator,
+                        d_loss_fn, limit=True
+                    )
+                    metrics_jta = check_accuracy(
+                        args, jta_loader, predictor, discriminator,
+                        d_loss_fn, limit=True
+                    )
+                    wandb.log(metrics_train, step=t)
+                    wandb.log(metrics_jta, step=t)
+                    '''
+                    wandb.log(metrics_val)
 
-            for k, v in sorted(metrics_val.items()):
-                logger.info('  [val] {}: {:.3f}'.format(k, v))
-                checkpoint['metrics_val'][k].append(v)
-            '''
-            for k, v in sorted(metrics_train.items()):
-                logger.info('  [train] {}: {:.3f}'.format(k, v))
-                checkpoint['metrics_train'][k].append(v)
-            for k, v in sorted(metrics_train.items()):
-                logger.info('  [jta] {}: {:.3f}'.format(k, v))
-                checkpoint['metrics_jta'][k].append(v)
-            '''
+                    for k, v in sorted(metrics_val.items()):
+                        logger.info('  [val] {}: {:.3f}'.format(k, v))
+                        checkpoint['metrics_val'][k].append(v)
+                    '''
+                    for k, v in sorted(metrics_train.items()):
+                        logger.info('  [train] {}: {:.3f}'.format(k, v))
+                        checkpoint['metrics_train'][k].append(v)
+                    for k, v in sorted(metrics_train.items()):
+                        logger.info('  [jta] {}: {:.3f}'.format(k, v))
+                        checkpoint['metrics_jta'][k].append(v)
+                    '''
 
-            min_ade = min(checkpoint['metrics_val']['ade'])
-            min_fde = min(checkpoint['metrics_val']['fde'])
-
-
-            if metrics_val['ade'] == min_ade:
-                logger.info('New low for avg_disp_error')
-                checkpoint['best_t'] = t
-                checkpoint['g_best_state'] = predictor.state_dict()
-                checkpoint['d_best_state'] = discriminator.state_dict()
+                    min_ade = min(checkpoint['metrics_val']['ade'])
+                    min_fde = min(checkpoint['metrics_val']['fde'])
 
 
-                # Save another checkpoint with model weights and
-                # optimizer state
-                checkpoint['p_state'] = predictor.state_dict()
-                checkpoint['p_optim_state'] = optimizer_p.state_dict()
-                checkpoint['g_state'] = generator.state_dict()
-                checkpoint['g_optim_state'] = optimizer_g.state_dict()
-                checkpoint['d_state'] = discriminator.state_dict()
-                checkpoint['d_optim_state'] = optimizer_d.state_dict()
-
-                eval_dict['min_ade'] = min_ade
-                eval_dict['min_fde'] = min_fde
-                eval_dict['t'] = t
-                eval_dict['epoch'] = epoch
+                    if metrics_val['ade'] == min_ade:
+                        logger.info('New low for avg_disp_error')
+                        checkpoint['best_t'] = t
+                        checkpoint['g_best_state'] = predictor.state_dict()
+                        checkpoint['d_best_state'] = discriminator.state_dict()
 
 
- 
-                out_path = os.path.join(args.output_dir, args.tag)
-                out_name = args.dataset_name +'_'+args.tag
-                if not os.path.exists(out_path):
-                    os.makedirs(out_path)
-                checkpoint_path = os.path.join(
-                    out_path, '%s_with_model.pt' % out_name
-                )
-                logger.info('Saving checkpoint to {}'.format(checkpoint_path))
-                torch.save(checkpoint, checkpoint_path)
-                logger.info('Done.')
+                        # Save another checkpoint with model weights and
+                        # optimizer state
+                        checkpoint['p_state'] = predictor.state_dict()
+                        checkpoint['p_optim_state'] = optimizer_p.state_dict()
+                        checkpoint['g_state'] = generator.state_dict()
+                        checkpoint['g_optim_state'] = optimizer_g.state_dict()
+                        checkpoint['d_state'] = discriminator.state_dict()
+                        checkpoint['d_optim_state'] = optimizer_d.state_dict()
 
-                wandb.log(eval_dict)
+                        eval_dict['min_ade'] = min_ade
+                        eval_dict['min_fde'] = min_fde
+                        eval_dict['t'] = t
+                        eval_dict['epoch'] = epoch
 
 
-            d_steps_left = args.d_steps
-            g_steps_left = args.g_steps
-            #if t >= args.num_iterations:
-                #break
+        
+                        out_path = os.path.join(args.output_dir, args.tag)
+                        out_name = args.dataset_name +'_'+args.tag
+                        if not os.path.exists(out_path):
+                            os.makedirs(out_path)
+                        checkpoint_path = os.path.join(
+                            out_path, '%s_with_model.pt' % out_name
+                        )
+                        logger.info('Saving checkpoint to {}'.format(checkpoint_path))
+                        torch.save(checkpoint, checkpoint_path)
+                        logger.info('Done.')
 
+                        wandb.log(eval_dict)
+
+                except:
+                    continue
+                d_steps_left = args.d_steps
+                g_steps_left = args.g_steps
+                #if t >= args.num_iterations:
+                    #break
 
 if __name__ == '__main__':
     args = parser.parse_args()

@@ -10,7 +10,7 @@ import subprocess
 
 from sgan.losses import cal_l2_losses, l2_loss, displacement_error, final_displacement_error
 from sgcn.utils import seq_to_graph
-from sgcn.metrics import seq_to_nodes, nodes_rel_to_nodes_abs
+from sgcn.metrics import nodes_rel_to_nodes_abs_np, seq_to_nodes, nodes_rel_to_nodes_abs, ade, fde
 
 import torch.distributions.multivariate_normal as torchdist
 import copy
@@ -119,7 +119,7 @@ def evaluate_helper(error, seq_start_end):
         sum_ += _error
     return sum_
 
-def check_accuracy(
+def check_accuracy_(
     args, loader, predictor, discriminator, d_loss_fn, t, epoch, limit=False):
 
     d_losses = []
@@ -141,7 +141,7 @@ def check_accuracy(
 
             loss_mask = loss_mask[:, args.obs_len:]
 
-            ade, fde = [], []
+            #ade, fde = [], []
             total_traj += pred_traj_gt.size(1)
 
             identity_spatial = torch.ones((V_obs.shape[1], V_obs.shape[2], V_obs.shape[2]), device='cuda') * \
@@ -234,7 +234,7 @@ def init_weights(m):
 
 
 
-def check_accuracy_(
+def check_accuracy(
     args, loader, predictor, discriminator, d_loss_fn, t, epoch, limit=False):
     raw_data_dict = {}
     ade_bigls = []
@@ -260,7 +260,7 @@ def check_accuracy_(
 
             loss_mask = loss_mask[:, args.obs_len:]
 
-            ade, fde = [], []
+            #ade, fde = [], []
             total_traj += pred_traj_gt.size(1)
 
             identity_spatial = torch.ones((V_obs.shape[1], V_obs.shape[2], V_obs.shape[2]), device='cuda') * \
@@ -299,12 +299,12 @@ def check_accuracy_(
             # #Now sample 20 samples
             ade_ls = {}
             fde_ls = {}
-            V_x = seq_to_nodes(obs_traj.data.cpu().numpy().copy())
-            V_x_rel_to_abs = nodes_rel_to_nodes_abs(V_obs[:,:,:,:2].data.cpu().numpy().squeeze().copy(),
+            V_x = obs_traj.squeeze(0).cpu().numpy().copy() #seq_to_nodes(obs_traj.cpu().numpy().copy())
+            V_x_rel_to_abs = nodes_rel_to_nodes_abs_np(V_obs[:,:,:,:2].cpu().numpy().squeeze().copy(),
                                                     V_x[0,:,:].copy())
             #
-            V_y = seq_to_nodes(pred_traj_gt.data.cpu().numpy().copy())
-            V_y_rel_to_abs = nodes_rel_to_nodes_abs(V_tr.data.cpu().numpy().squeeze().copy(),
+            #V_y = seq_to_nodes(pred_traj_gt.data.cpu().numpy().copy())
+            V_y_rel_to_abs = nodes_rel_to_nodes_abs_np(V_tr.cpu().numpy().squeeze().copy(),
                                                     V_x[-1,:,:].copy())
 
             raw_data_dict[step] = {}
@@ -317,11 +317,11 @@ def check_accuracy_(
                 ade_ls[n]=[]
                 fde_ls[n]=[]
             #
-            for k in range(1):
+            for k in range(10):
 
                 V_pred = mvnormal.sample()
 
-                V_pred_rel_to_abs = nodes_rel_to_nodes_abs(V_pred.data.cpu().numpy().squeeze().copy(),
+                V_pred_rel_to_abs = nodes_rel_to_nodes_abs_np(V_pred.data.cpu().numpy().squeeze().copy(),
                                                         V_x[-1,:,:].copy())
 
                 raw_data_dict[step]['pred'].append(copy.deepcopy(V_pred_rel_to_abs))
