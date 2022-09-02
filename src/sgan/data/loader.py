@@ -15,7 +15,7 @@ def data_loader(args, path):
     loader = DataLoader(
         dset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=False,
         num_workers=args.loader_num_workers,
         collate_fn=seq_collate)
     return dset, loader

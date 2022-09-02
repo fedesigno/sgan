@@ -43,10 +43,10 @@ def gan_d_loss(scores_real, scores_fake):
     - loss: Tensor of shape (,) giving GAN discriminator loss
     """
     y_real = torch.ones_like(scores_real) * random.uniform(0.7, 1.2)
-    y_fake = torch.zeros_like(scores_fake) * random.uniform(0, 0.3)
+    y_fake = torch.ones_like(scores_fake) * random.uniform(0, 0.3)
     loss_real = bce_loss(scores_real, y_real)
     loss_fake = bce_loss(scores_fake, y_fake)
-    return 3*loss_real + loss_fake
+    return loss_real + loss_fake
 
 def gan_d_g_loss(scores_real, scores_fake, typ):
     """
@@ -62,7 +62,7 @@ def gan_d_g_loss(scores_real, scores_fake, typ):
     elif typ=='fake':
         k = random.uniform(0, 0.3)
     y_real = torch.ones_like(scores_real) * k
-    y_fake = torch.zeros_like(scores_fake) * k
+    y_fake = torch.ones_like(scores_fake) * k
     loss_real = bce_loss(scores_real, y_real)
     loss_fake = bce_loss(scores_fake, y_fake)
     return loss_real + loss_fake

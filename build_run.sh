@@ -1,10 +1,10 @@
-docker rmi eidos-service.di.unito.it/signoretta/sgan:sgcn_eth
-docker build -t eidos-service.di.unito.it/signoretta/sgan:sgcn_eth . -f Dockerfile
-docker push eidos-service.di.unito.it/signoretta/sgan:sgcn_eth
+docker rmi eidos-service.di.unito.it/signoretta/sgan:sgcngan
+docker build -t eidos-service.di.unito.it/signoretta/sgan:sgcngan . -f Dockerfile
+docker push eidos-service.di.unito.it/signoretta/sgan:sgcngan
 
-docker service rm signoretta-sgan-sgcn_eth
-submit eidos-service.di.unito.it/signoretta/sgan:sgcn_eth train_SGCN_GEN.py \
-  --dataset_name 'eth' \
+docker service rm signoretta-sgan-sgcngan
+submit eidos-service.di.unito.it/signoretta/sgan:sgcngan train_SGCN_GEN.py \
+  --dataset_name 'hotel' \
   --delim tab \
   --d_type 'local' \
   --pred_len 12 \
@@ -22,7 +22,7 @@ submit eidos-service.di.unito.it/signoretta/sgan:sgcn_eth train_SGCN_GEN.py \
   --l2_loss_weight 1 \
   --batch_norm 0 \
   --dropout 0 \
-  --batch_size 128 \
+  --batch_size 64 \
   --g_learning_rate 1e-3 \
   --g_steps 1 \
   --d_learning_rate 1e-3 \
@@ -30,7 +30,7 @@ submit eidos-service.di.unito.it/signoretta/sgan:sgcn_eth train_SGCN_GEN.py \
   --checkpoint_every 10 \
   --print_every 50 \
   --num_iterations 20000 \
-  --num_epochs 500 \
+  --num_epochs 3000 \
   --pooling_type 'pool_net' \
   --clipping_threshold_g 1.5 \
   --best_k 10 \
@@ -38,9 +38,9 @@ submit eidos-service.di.unito.it/signoretta/sgan:sgcn_eth train_SGCN_GEN.py \
   --checkpoint_name gan_test \
   --restore_from_checkpoint 0 \
   --dataset_dir '/data/trajgan/datasets/datasets_real' \
-  --tag 'with_SGCN' \
+  --tag 'sgcngan' \
   --dataset_dir_synth '/data/trajgan/datasets/datasets_synthetic' 
 
-docker service logs -f signoretta-sgan-sgcn_eth
+docker service logs -f signoretta-sgan-sgcngan
 
-#  --dataset_dir_synth '/data/trajgan/datasets/datasets_sgcn_eth' \
+#  --dataset_dir_synth '/data/trajgan/datasets/datasets_sgcngan' \

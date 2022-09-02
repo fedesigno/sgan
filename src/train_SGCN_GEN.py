@@ -29,6 +29,7 @@ from sgan.utils import check_accuracy, get_dtypes, init_weights
 from sgan.steps import discriminator_step, generator_step, predictor_step
 
 torch.backends.cudnn.benchmark = True
+torch.random.manual_seed(42)
 
 parser = argparse.ArgumentParser()
 FORMAT = '[%(levelname)s: %(filename)s: %(lineno)4d]: %(message)s'
@@ -93,7 +94,7 @@ parser.add_argument('--l2_loss_weight', default=1, type=float)
 parser.add_argument('--best_k', default=1, type=int)
 
 # Output
-parser.add_argument('--output_dir', default='src/checkpoint')
+parser.add_argument('--output_dir', default='/scratch/sgan/src/checkpoint')
 parser.add_argument('--print_every', default=5, type=int)
 parser.add_argument('--checkpoint_every', default=100, type=int)
 parser.add_argument('--checkpoint_name', default='checkpoint')
@@ -105,6 +106,7 @@ parser.add_argument('--num_samples_check', default=5000, type=int)
 parser.add_argument('--use_gpu', default=1, type=int)
 parser.add_argument('--timing', default=0, type=int)
 parser.add_argument('--gpu_num', default="0", type=str)
+
 
 
 
@@ -161,8 +163,8 @@ def main(args):
     logger.info(predictor)
 
     discriminator = TrajectoryDiscriminator(
-        obs_len=args.obs_len,
-        pred_len=args.pred_len,
+        obs_len=20, #args.obs_len,
+        pred_len=20, #args.pred_len,
         embedding_dim=args.embedding_dim,
         h_dim=args.encoder_h_dim_d,
         mlp_dim=args.mlp_dim,
@@ -208,13 +210,15 @@ def main(args):
         predictor.parameters(), lr=0.01, weight_decay=0.0001 #args.g_learning_rate
         )
     optimizer_d = optim.Adam(
-        discriminator.parameters(), lr=args.d_learning_rate
+        discriminator.parameters(), lr=0.001, #args.d_learning_rate
     )
     optimizer_g = optim.Adam(
-        generator.parameters(), lr=args.g_learning_rate
+        generator.parameters(), lr=0.001, #lr=args.g_learning_rate
     )
 
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer_p, milestones=[50, 100], gamma=0.5)
+    scheduler_p = optim.lr_scheduler.MultiStepLR(optimizer_p, milestones=[150, 250, 500, 800, 1500, 2000], gamma=0.5)
+    scheduler_g = optim.lr_scheduler.MultiStepLR(optimizer_p, milestones=[500, 1000, 2000], gamma=0.1)
+    scheduler_d = optim.lr_scheduler.MultiStepLR(optimizer_p, milestones=[500, 1000, 2000], gamma=0.1)
     # Maybe restore from checkpoint
     restore_path = None
     if args.checkpoint_start_from is not None:
@@ -272,9 +276,7 @@ def main(args):
     
     eval_dict = {'min_ade': None, 'min_fde': None, 't': 0, 'epoch': 0}
     t0 = None
-
     for epoch in range(args.num_epochs): #while t < args.num_iterations:
-        last_iter = False
 
         gc.collect()
         d_steps_left = args.d_steps
@@ -282,57 +284,57 @@ def main(args):
         p_steps_left = args.p_steps
         #epoch += 1
         logger.info('Starting epoch {}'.format(epoch))
-        for t, batch in enumerate(tqdm(zip(train_loader, jta_loader), desc=f"Epoch {epoch}")):
-            if args.timing == 1:
-                torch.cuda.synchronize()
-                t1 = time.time()
-            
-            #if t>=len(train_loader)-2:
-                #last_iter=True
+        t=0
 
+        for z, batch_loader in enumerate([train_loader, jta_loader]):
+            loader_len = len(batch_loader)
+            turn_point = int(loader_len / args.batch_size) * args.batch_size + loader_len % args.batch_size - 1
+            is_fst_loss = True
+            cnt=1
+            for batch in tqdm(batch_loader, desc=f"Epoch {epoch}"):
 
-            # Decide whether to use the batch for stepping on discriminator or
-            # predictor; an iteration consists of args.d_steps steps on the
-            # discriminator followed by args.g_steps steps on the predictor.
+                if args.timing == 1:
+                    torch.cuda.synchronize()
+                    t1 = time.time()
+                
+                step_type = 'p'
+                losses_p, loss_p = predictor_step(
+                    args, batch, predictor, discriminator, generator, g_loss_fn, t, epoch, z, optimizer_p
+                    )
 
-            #if g_steps_left > 0:
-            
-            step_type = 'g'
-            losses_g = generator_step(args, batch[1], generator,
-                                        discriminator, g_loss_fn,
-                                        optimizer_g, t, epoch)
-            checkpoint['norm_g'].append(
-                get_total_norm(generator.parameters())
-            )
-            g_steps_left -= 1
-
-            #elif p_steps_left > 0:
-            step_type = 'p'
-            losses_p = predictor_step(args, batch, predictor,
-                                        discriminator, generator,
-                                        g_loss_fn,
-                                        optimizer_p, last_iter, t, epoch)
-            checkpoint['norm_p'].append(
-                get_total_norm(predictor.parameters())
-            )
-            p_steps_left -= 1
-
-            #elif d_steps_left > 0:
-            for _ in range(1):
+                checkpoint['norm_p'].append(
+                    get_total_norm(predictor.parameters())
+                )
+                p_steps_left -= 1
+               
                 step_type = 'd'
-                losses_d = discriminator_step(args, batch, predictor,
+                losses_d, loss_d = discriminator_step(args, batch, predictor,
                                                 discriminator, generator,
                                                 d_loss_fn, d_loss_g_fn,
-                                                optimizer_d, t, epoch)
+                                                optimizer_d, t, epoch, z)
                 checkpoint['norm_d'].append(
                     get_total_norm(discriminator.parameters()))
                 d_steps_left -= 1
-                
-            scheduler.step()
 
-            wandb.log(losses_d)
-            wandb.log(losses_g)
-            wandb.log(losses_p)
+                step_type = 'g'
+
+                if z==1:
+                    losses_g, loss_g = generator_step(args, batch, generator,
+                                                discriminator, g_loss_fn,
+                                                optimizer_g, t, epoch)
+                    checkpoint['norm_g'].append(
+                        get_total_norm(generator.parameters())
+                    )
+                    g_steps_left -= 1
+                    wandb.log(losses_g)
+
+                wandb.log(losses_d)
+                wandb.log(losses_p)
+                cnt+=1
+
+
+            scheduler_p.step()
+            
 
             if args.timing == 1:
                 torch.cuda.synchronize()
@@ -344,21 +346,25 @@ def main(args):
             #if d_steps_left > 0 or g_steps_left > 0 or p_steps_left > 0:
                 #continue
 
-
             # Maybe save loss
             if t > 0:
                 logger.info('t = {} / {}'.format(t,len(train_loader)))
+
+                
                 for k, v in sorted(losses_d.items()):
                     logger.info('  [D] {}: {:.3f}'.format(k, v))
                     checkpoint['D_losses'][k].append(v)
-
-                for k, v in sorted(losses_g.items()):
-                    logger.info('  [G] {}: {:.3f}'.format(k, v))
-                    checkpoint['G_losses'][k].append(v)
-  
+                
+                if z==1:
+                    for k, v in sorted(losses_g.items()):
+                        logger.info('  [G] {}: {:.3f}'.format(k, v))
+                        checkpoint['G_losses'][k].append(v)
+             
+                
                 for k, v in sorted(losses_p.items()):
                     logger.info('  [P] {}: {:.3f}'.format(k, v))
                     checkpoint['P_losses'][k].append(v)
+
                 checkpoint['losses_ts'].append(t)
 
             # Maybe save a checkpoint
@@ -367,87 +373,78 @@ def main(args):
             checkpoint['counters']['epoch'] = epoch
             checkpoint['sample_ts'].append(t)
 
-            # Check stats on the validation set
-            
-
-      
-            #logger.info('Checking stats on val ...')
-            if t%10==0:
-                try:
-                    metrics_val = check_accuracy(
-                        args, val_loader, predictor, discriminator, d_loss_fn, t, epoch
-                    )
-                    '''
-                    logger.info('Checking stats on train ...')
-                    metrics_train = check_accuracy(
-                        args, train_loader, predictor, discriminator,
-                        d_loss_fn, limit=True
-                    )
-                    metrics_jta = check_accuracy(
-                        args, jta_loader, predictor, discriminator,
-                        d_loss_fn, limit=True
-                    )
-                    wandb.log(metrics_train, step=t)
-                    wandb.log(metrics_jta, step=t)
-                    '''
-                    wandb.log(metrics_val)
-
-                    for k, v in sorted(metrics_val.items()):
-                        logger.info('  [val] {}: {:.3f}'.format(k, v))
-                        checkpoint['metrics_val'][k].append(v)
-                    '''
-                    for k, v in sorted(metrics_train.items()):
-                        logger.info('  [train] {}: {:.3f}'.format(k, v))
-                        checkpoint['metrics_train'][k].append(v)
-                    for k, v in sorted(metrics_train.items()):
-                        logger.info('  [jta] {}: {:.3f}'.format(k, v))
-                        checkpoint['metrics_jta'][k].append(v)
-                    '''
-
-                    min_ade = min(checkpoint['metrics_val']['ade'])
-                    min_fde = min(checkpoint['metrics_val']['fde'])
-
-
-                    if metrics_val['ade'] == min_ade:
-                        logger.info('New low for avg_disp_error')
-                        checkpoint['best_t'] = t
-                        checkpoint['g_best_state'] = predictor.state_dict()
-                        checkpoint['d_best_state'] = discriminator.state_dict()
-
-
-                        # Save another checkpoint with model weights and
-                        # optimizer state
-                        checkpoint['p_state'] = predictor.state_dict()
-                        checkpoint['p_optim_state'] = optimizer_p.state_dict()
-                        checkpoint['g_state'] = generator.state_dict()
-                        checkpoint['g_optim_state'] = optimizer_g.state_dict()
-                        checkpoint['d_state'] = discriminator.state_dict()
-                        checkpoint['d_optim_state'] = optimizer_d.state_dict()
-
-                        eval_dict['min_ade'] = min_ade
-                        eval_dict['min_fde'] = min_fde
-                        eval_dict['t'] = t
-                        eval_dict['epoch'] = epoch
-
-
+            t+=1
+                # Check stats on the validation set
         
-                        out_path = os.path.join(args.output_dir, args.tag)
-                        out_name = args.dataset_name +'_'+args.tag
-                        if not os.path.exists(out_path):
-                            os.makedirs(out_path)
-                        checkpoint_path = os.path.join(
-                            out_path, '%s_with_model.pt' % out_name
-                        )
-                        logger.info('Saving checkpoint to {}'.format(checkpoint_path))
-                        torch.save(checkpoint, checkpoint_path)
-                        logger.info('Done.')
+                #logger.info('Checking stats on val ...')
+            #try:
+        metrics_val = check_accuracy(
+            args, val_loader, predictor, discriminator, d_loss_fn, t, epoch
+        )
+        
+        logger.info('Checking stats on val ...')
 
-                        wandb.log(eval_dict)
+        for k, v in sorted(metrics_val.items()):
+            logger.info('  [val] {}: {:.3f}'.format(k, v))
+            checkpoint['metrics_val'][k].append(v)
+        
+        '''
+        for k, v in sorted(metrics_train.items()):
+            logger.info('  [train] {}: {:.3f}'.format(k, v))
+            checkpoint['metrics_train'][k].append(v)
+        for k, v in sorted(metrics_train.items()):
+            logger.info('  [jta] {}: {:.3f}'.format(k, v))
+            checkpoint['metrics_jta'][k].append(v)
+        '''
+        ade_ = checkpoint['metrics_val']['ade'][-1]
+        fde_ = checkpoint['metrics_val']['fde'][-1]
+        min_ade = min(checkpoint['metrics_val']['ade'])
+        min_fde = min(checkpoint['metrics_val']['fde'])
 
-                except:
-                    continue
-                d_steps_left = args.d_steps
-                g_steps_left = args.g_steps
+        eval_dict['ade'] = ade_
+        eval_dict['fde'] = fde_
+
+        eval_dict['t'] = t
+        eval_dict['epoch'] = epoch
+
+        wandb.log(eval_dict)
+
+
+        if metrics_val['ade'] == min_ade:
+            logger.info('New low for avg_disp_error')
+            checkpoint['best_t'] = t
+            checkpoint['g_best_state'] = predictor.state_dict()
+            checkpoint['d_best_state'] = discriminator.state_dict()
+
+
+            # Save another checkpoint with model weights and
+            # optimizer state
+            checkpoint['p_state'] = predictor.state_dict()
+            checkpoint['p_optim_state'] = optimizer_p.state_dict()
+            checkpoint['g_state'] = generator.state_dict()
+            checkpoint['g_optim_state'] = optimizer_g.state_dict()
+            checkpoint['d_state'] = discriminator.state_dict()
+            checkpoint['d_optim_state'] = optimizer_d.state_dict()
+
+            eval_dict['min_ade'] = min_ade
+            eval_dict['min_fde'] = min_fde
+
+
+            out_path = os.path.join(args.output_dir, args.tag)
+            out_name = args.dataset_name +'_'+args.tag
+            if not os.path.exists(out_path):
+                os.makedirs(out_path)
+            checkpoint_path = os.path.join(
+                out_path, '%s_with_model.pt' % out_name
+            )
+            logger.info('Saving checkpoint to {}'.format(checkpoint_path))
+            torch.save(checkpoint, checkpoint_path)
+            logger.info('Done.')
+
+            wandb.log(eval_dict)
+
+                #d_steps_left = args.d_steps
+                #g_steps_left = args.g_steps
                 #if t >= args.num_iterations:
                     #break
 

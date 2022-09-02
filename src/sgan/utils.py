@@ -317,7 +317,7 @@ def check_accuracy(
                 ade_ls[n]=[]
                 fde_ls[n]=[]
             #
-            for k in range(10):
+            for k in range(20):
 
                 V_pred = mvnormal.sample()
 
